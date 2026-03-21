@@ -6,7 +6,7 @@
 # When a new version is found, downloads the release tarball and calls
 # the vm-updater plugin's /system/update endpoint to handle the merge.
 #
-# Runs via systemd timer every 30 minutes.
+# Called every 30 minutes by the background loop in entrypoint.sh.
 # Also callable manually: /opt/jarvit/scripts/vm-auto-update.sh
 #
 # Exit codes:
