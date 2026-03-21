@@ -1,0 +1,36 @@
+{
+  "$schema": "https://openclaw.ai/schemas/plugin.json",
+  "id": "vm-updater",
+  "name": "vm-updater",
+  "version": "1.0.0",
+  "description": "Handles VM software updates with intelligent 3-way merge. Exposes /system/update HTTP endpoint.",
+
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "manifestPath": {
+        "type": "string",
+        "default": "/opt/jarvit/vm-manifest.json",
+        "description": "Path to the current manifest file"
+      },
+      "protectedPaths": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [
+          "/opt/jarvit/config/jarvit.json",
+          "/data/config/jarvit.json",
+          "/data/.jarvit/jarvit.json"
+        ],
+        "description": "Paths that are never overwritten during updates"
+      }
+    }
+  },
+
+  "hooks": {
+    "afterServerStart": {
+      "handler": "./dist/index.js",
+      "export": "afterServerStart",
+      "priority": 50
+    }
+  }
+}

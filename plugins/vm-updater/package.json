@@ -1,0 +1,14 @@
+{
+  "name": "jarvit-vm-updater",
+  "version": "1.0.0",
+  "description": "JARVIT VM auto-update handler plugin",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^22.0.0"
+  }
+}

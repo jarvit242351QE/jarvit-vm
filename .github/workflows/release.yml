@@ -1,0 +1,70 @@
+name: Release VM Package
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build vm-updater plugin
+        working-directory: plugins/vm-updater
+        run: |
+          npm install
+          npm run build
+
+      - name: Generate manifest
+        run: |
+          python3 scripts/generate-manifest.py "${{ github.ref_name }}"
+
+      - name: Package release
+        run: |
+          # Create the files/ directory structure that mirrors the VM filesystem
+          mkdir -p release-pkg/files/opt/jarvit/scripts
+          mkdir -p release-pkg/files/opt/jarvit/plugins/vm-updater/dist
+
+          # Copy update scripts
+          cp scripts/vm-auto-update.sh release-pkg/files/opt/jarvit/scripts/
+          cp scripts/vm-simple-update.sh release-pkg/files/opt/jarvit/scripts/
+          chmod +x release-pkg/files/opt/jarvit/scripts/*.sh
+
+          # Copy vm-updater plugin
+          cp plugins/vm-updater/jarvit.plugin.json release-pkg/files/opt/jarvit/plugins/vm-updater/
+          cp plugins/vm-updater/package.json release-pkg/files/opt/jarvit/plugins/vm-updater/
+          cp -r plugins/vm-updater/dist/* release-pkg/files/opt/jarvit/plugins/vm-updater/dist/
+
+          # Copy config template (users can customize — protected during updates)
+          cp config/jarvit.json release-pkg/files/opt/jarvit/config/jarvit.json || true
+
+          # Copy systemd units
+          cp scripts/jarvit-vm-update.timer release-pkg/files/opt/jarvit/scripts/
+          cp scripts/jarvit-vm-update.service release-pkg/files/opt/jarvit/scripts/
+
+          # Copy manifest and changelog
+          cp manifest.json release-pkg/
+          cp CHANGELOG.md release-pkg/ 2>/dev/null || echo "No changelog" > release-pkg/CHANGELOG.md
+
+          # Create tarball
+          cd release-pkg
+          tar czf ../jarvit-vm.tar.gz .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            jarvit-vm.tar.gz
+            manifest.json
+            CHANGELOG.md
+          make_latest: true
+          generate_release_notes: true

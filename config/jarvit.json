@@ -1,0 +1,138 @@
+{
+  "models": {
+    "providers": {
+      "jarvit": {
+        "baseUrl": "${JARVIT_PROXY_URL}/v1",
+        "apiKey": "${JARVIT_GATEWAY_TOKEN}",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "kimi",
+            "name": "Kimi K2.5 - General conversation, research, analysis",
+            "contextWindow": 256000,
+            "maxTokens": 8192,
+            "reasoning": false,
+            "input": ["text"],
+            "cost": { "input": 0.60, "output": 2.50, "cacheRead": 0.10 }
+          },
+          {
+            "id": "minimax",
+            "name": "MiniMax M2.5 - Coding, creative, complex tasks",
+            "contextWindow": 128000,
+            "maxTokens": 16384,
+            "reasoning": true,
+            "input": ["text"],
+            "cost": { "input": 0.30, "output": 1.20, "cacheRead": 0.03 }
+          },
+          {
+            "id": "claude",
+            "name": "Claude Opus 4.6 - Emergency fallback only",
+            "contextWindow": 200000,
+            "maxTokens": 16384,
+            "reasoning": true,
+            "input": ["text", "image"],
+            "cost": { "input": 5.00, "output": 25.00, "cacheRead": 0.50 }
+          }
+        ]
+      }
+    }
+  },
+
+  "tools": {
+    "deny": ["web_search", "web_fetch", "browser", "canvas", "tts", "nodes"]
+  },
+
+  "plugins": {
+    "load": {
+      "paths": ["/opt/jarvit/plugins"]
+    }
+  },
+
+  "memory": {
+    "backend": "builtin",
+    "citations": "auto"
+  },
+
+  "agents": {
+    "defaults": {
+      "workspace": "/data/.jarvit/workspace",
+      "model": {
+        "primary": "jarvit/kimi",
+        "fallbacks": [
+          "jarvit/minimax",
+          "jarvit/claude"
+        ]
+      },
+      "memorySearch": {
+        "enabled": true,
+        "sources": ["memory"],
+        "experimental": {
+          "sessionMemory": false
+        },
+        "query": {
+          "maxResults": 5,
+          "minScore": 0.10,
+          "hybrid": {
+            "enabled": true,
+            "vectorWeight": 0.3,
+            "textWeight": 0.7
+          }
+        }
+      },
+      "contextPruning": {
+        "mode": "cache-ttl",
+        "ttl": "6h",
+        "keepLastAssistants": 3
+      },
+      "compaction": {
+        "mode": "default",
+        "memoryFlush": {
+          "enabled": true,
+          "softThresholdTokens": 216000,
+          "periodicFlushInterval": 15000,
+          "prompt": "Memory flush. Follow this process:\n\n1. READ memory/_tree.md to see the directory of memory files.\n2. For each fact/preference/decision worth remembering:\n   a. Find the right file in the tree (e.g. memory/personal/preferences.md)\n   b. READ that file to check what's already there\n   c. If the fact UPDATES an existing entry: modify the 'Current State' section and move the old value to 'History' with today's date\n   d. If it's NEW: add it to 'Current State'\n   e. If no existing file fits: CREATE a new file + directory, then UPDATE memory/_tree.md to include it\n   f. Add a 'Related' section linking to other relevant tree files\n3. Every file must have this structure:\n   ## Current State (last updated: YYYY-MM-DD)\n   - fact one\n   - fact two\n   ## Related\n   - See also: memory/path/to/related-file.md\n   ## History\n   - [YYYY-MM-DD] what changed (was: old value)\n4. UPDATE memory/_tree.md if you created new files/directories.\n5. UPDATE MEMORY.md with a live summary + topic map:\n   ## What I Know\n   - Brief list of key facts from each category (1-2 lines each)\n   ## Topics (navigate with memory_get)\n   For each topic area, list the files and a brief description of what's in them.\n   Example:\n   **Personal** → memory/personal/\n     - preferences.md: food (pizza), music, coding style\n     - facts.md: name, location (Berlin), occupation (CTO)\n   **Projects** → memory/projects/\n     - current.md: JARVIT — deployed on Hetzner, using Hindsight\n   This is the agent's TABLE OF CONTENTS for navigating its own knowledge.\n   ## Quick Stats\n   - How many facts, preferences, projects, etc. stored\n6. UPDATE memory/sessions/recent.md with a COMPLETE session changelog.\n   Format (keep last 5 sessions, remove older ones, most recent at top):\n   ## [YYYY-MM-DD HH:MM] Session <sessionId>\n   **What happened:**\n   Numbered chronological list of everything done in this session.\n   Each item: what was done + why + the result. Be specific.\n   **Decisions made (with reasoning):**\n   Every decision, each with a '(because: ...)' explanation.\n   **New preferences stored:**\n   Every preference or instruction the user expressed.\n   **New facts/memories stored:**\n   Every fact, data point, or piece of information learned.\n   **Open items:**\n   Everything unfinished, blocked, or planned as next step.\n   Be thorough — the agent should be able to read this and know EVERYTHING\n   that happened without checking the transcript.\n7. If nothing worth storing, reply with NO_REPLY.",
+          "systemPrompt": "You are a memory organizer for a personal AI assistant. Your job:\n- Extract durable facts from the session (preferences, decisions, project state, personal info, instructions)\n- Organize them into the tree structure under memory/\n- ALWAYS read the target file before writing — never duplicate, always update\n- When facts change, UPDATE the Current State and log the change in History\n- Add 'Related' sections to link connected topics across the tree\n- You CAN create new directories and files if a topic doesn't fit existing categories\n- After creating new files/dirs, update memory/_tree.md with the new entry\n- ALWAYS update MEMORY.md with a live summary + topic map after organizing\n- The topic map in MEMORY.md lists every tree file with a brief description of what's in it\n- ALWAYS update memory/sessions/recent.md with a COMPLETE session changelog (keep last 5)\n- Current state goes at TOP of file (recency). History goes below.\n- Be concise. One fact per line. No filler."
+        }
+      },
+      "userTimezone": "auto"
+    },
+
+    "list": [
+      {
+        "id": "general",
+        "name": "General Assistant",
+        "model": { "primary": "jarvit/kimi" },
+        "systemPromptAppend": "CONTACT RULES:\n- You have your own phone number. People can message or call you.\n- Owner = identified by their phone number (linked during setup).\n- Owner messages: respond normally, full access.\n- Unknown contacts: DO NOT respond. Message your owner:\n  \"[+1-555-9999] says: '[message]'. Should I respond?\n  Reply: allow / always / block / ignore\"\n- \"always\" → remember in memory, auto-respond forever.\n- \"block\" → silently ignore forever.\n- All decisions stored in memory."
+      }
+    ]
+  },
+
+  "bindings": [
+    {
+      "agentId": "general",
+      "match": { "channel": "*" }
+    }
+  ],
+
+  "session": {
+    "reset": {
+      "mode": "daily",
+      "atHour": 4
+    }
+  },
+
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "bind": "lan",
+    "auth": {
+      "token": "${JARVIT_GATEWAY_TOKEN}"
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true },
+        "responses": { "enabled": true }
+      }
+    }
+  }
+}

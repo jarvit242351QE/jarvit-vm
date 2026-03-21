@@ -1,0 +1,23 @@
+[Unit]
+Description=JARVIT VM Auto-Update Check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/jarvit/scripts/vm-auto-update.sh
+User=jarvit
+Group=jarvit
+TimeoutStartSec=300
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jarvit-vm-update
+
+# Security: minimal privileges for downloading and applying updates
+ProtectSystem=false
+ReadWritePaths=/opt/jarvit /data/updates /tmp
+
+[Install]
+WantedBy=multi-user.target
