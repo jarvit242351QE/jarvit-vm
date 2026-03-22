@@ -83,7 +83,7 @@ const protectedPaths = new Set([
     '/opt/jarvit/secrets/github-token',
 ]);
 
-let updated = 0, skipped = 0, conflicts = 0, securityApplied = 0;
+let updated = 0, skipped = 0, conflicts = 0, securityApplied = 0, deleted = 0;
 
 for (const [absPath, rawEntry] of Object.entries(newFiles)) {
     const info = normalize(rawEntry, absPath);
@@ -137,7 +137,27 @@ for (const [absPath, rawEntry] of Object.entries(newFiles)) {
     }
 }
 
-console.error('SUMMARY:' + updated + ':' + skipped + ':' + conflicts + ':' + securityApplied);
+// Handle obsolete files: in old manifest but NOT in new manifest
+for (const [absPath, rawEntry] of Object.entries(oldFiles)) {
+    if (absPath in newFiles) continue;
+    if (protectedPaths.has(absPath)) continue;
+
+    const currentChecksum = fileSha256(absPath);
+    if (currentChecksum === null) continue; // file already gone
+
+    const oldInfo = normalize(rawEntry, absPath);
+
+    if (currentChecksum === oldInfo.checksum) {
+        // User didn't modify it — safe to delete
+        console.log('DELETE:' + absPath);
+        deleted++;
+    } else {
+        // User modified it — keep it
+        console.error('KEPT_OBSOLETE:' + absPath);
+    }
+}
+
+console.error('SUMMARY:' + updated + ':' + skipped + ':' + conflicts + ':' + securityApplied + ':' + deleted);
 " 2>/tmp/vm-simple-update-errors) || {
     log "Manifest processing failed"
     cat /tmp/vm-simple-update-errors 2>/dev/null
@@ -160,6 +180,23 @@ echo "$UPDATES" | while IFS= read -r line; do
             cp "$src" "$dst"
             log "Updated: $dst"
             ;;
+        DELETE:*)
+            target=$(echo "$line" | cut -d: -f2)
+            if [ -f "$target" ]; then
+                rm -f "$target"
+                log "Deleted (obsolete, unmodified): $target"
+                # Clean up empty parent directories
+                parent=$(dirname "$target")
+                while [ "$parent" != "/" ] && [ -d "$parent" ]; do
+                    if [ -z "$(ls -A "$parent" 2>/dev/null)" ]; then
+                        rmdir "$parent" 2>/dev/null && log "Rmdir (empty): $parent" || break
+                        parent=$(dirname "$parent")
+                    else
+                        break
+                    fi
+                done
+            fi
+            ;;
     esac
 done
 
@@ -175,11 +212,16 @@ if [ -f /tmp/vm-simple-update-errors ]; then
                 skipped=$(echo "$line" | cut -d: -f3)
                 conflicts=$(echo "$line" | cut -d: -f4)
                 security=$(echo "$line" | cut -d: -f5)
-                log "Done: $updated updated, $skipped skipped, $conflicts conflicts, $security security patches"
+                del=$(echo "$line" | cut -d: -f6)
+                log "Done: $updated updated, $skipped skipped, $conflicts conflicts, $security security patches, $del obsolete deleted"
                 ;;
             CONFLICT:*)
                 cpath=$(echo "$line" | cut -d: -f2)
                 log "CONFLICT (user-modified, skipped): $cpath"
+                ;;
+            KEPT_OBSOLETE:*)
+                kpath=$(echo "$line" | cut -d: -f2)
+                log "KEPT (user modified, removed in update): $kpath"
                 ;;
             SECURITY:*)
                 spath=$(echo "$line" | cut -d: -f2-)

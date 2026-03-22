@@ -575,17 +575,50 @@ async function applyUpdate(
   // 3. Handle deleted files: files in old manifest but not in new
   for (const filePath of Object.keys(currentManifest.files)) {
     if (!(filePath in newManifest.files)) {
+      // Never delete protected paths
+      if (PROTECTED_PATHS.has(filePath)) {
+        log(`KEPT (protected): ${filePath}`);
+        continue;
+      }
+
       const currentChecksum = fileSha256(filePath);
+
+      // File already doesn't exist on disk — nothing to do
+      if (currentChecksum === null) {
+        continue;
+      }
+
       const oldRawEntry = currentManifest.files[filePath];
       const oldInfo = normalizeFileInfo(oldRawEntry, filePath);
 
       if (currentChecksum === oldInfo.checksum) {
+        // User didn't modify it. We put it there, update removes it. Safe to delete.
         try {
           fs.unlinkSync(filePath);
-          log(`DELETED: ${filePath}`);
+          log(`DELETED (obsolete, unmodified): ${filePath}`);
           result.filesUpdated++;
-        } catch {}
+
+          // Clean up empty parent directories
+          let dir = path.dirname(filePath);
+          while (dir !== "/" && dir !== ".") {
+            try {
+              const entries = fs.readdirSync(dir);
+              if (entries.length === 0) {
+                fs.rmdirSync(dir);
+                log(`RMDIR (empty): ${dir}`);
+                dir = path.dirname(dir);
+              } else {
+                break;
+              }
+            } catch {
+              break;
+            }
+          }
+        } catch (err: any) {
+          log(`Failed to delete obsolete file ${filePath}: ${err.message}`);
+        }
       } else {
+        // User modified this file. They're using it. Keep it.
         log(`KEPT (user modified, removed in update): ${filePath}`);
         result.conflicts.push({
           path: filePath,
