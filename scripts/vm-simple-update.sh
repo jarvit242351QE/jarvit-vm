@@ -9,6 +9,9 @@
 #   - Uses checksums from manifest.json for comparison
 #   - Supports both old (string) and new ({checksum, type}) manifest formats
 #
+# Cleanup: the caller (vm-auto-update.sh) deletes the update directory after
+# this script returns. This script only cleans up its own temp files.
+#
 # Dependencies: node (available in VM rootfs; python3 is NOT)
 #
 # Usage: vm-simple-update.sh <update_dir> <new_version> <current_version>
@@ -33,6 +36,9 @@ if [ ! -f "$UPDATE_DIR/manifest.json" ]; then
     log "No manifest.json in $UPDATE_DIR"
     exit 1
 fi
+
+# Clean up temp file on exit (success or failure)
+trap 'rm -f /tmp/vm-simple-update-errors' EXIT
 
 # Use node for JSON processing and checksum comparison
 UPDATES=$(node -e "
@@ -181,8 +187,10 @@ if [ -f /tmp/vm-simple-update-errors ]; then
                 ;;
         esac
     done < /tmp/vm-simple-update-errors
-    rm -f /tmp/vm-simple-update-errors
 fi
+
+# Note: caller (vm-auto-update.sh) handles deleting $UPDATE_DIR and tarball.
+# We only clean our temp file (handled by trap above).
 
 log "Simple update to $NEW_VERSION complete"
 exit 0
