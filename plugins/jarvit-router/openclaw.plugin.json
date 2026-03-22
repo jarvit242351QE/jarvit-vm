@@ -1,0 +1,48 @@
+{
+  "$schema": "https://openclaw.ai/schemas/plugin.json",
+  "id": "jarvit-router",
+  "name": "jarvit-router",
+  "version": "1.0.0",
+  "description": "Semantic intent router for JARVIT - routes to Kimi/MiniMax/Opus based on message intent",
+
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "escalation": {
+        "type": "object",
+        "properties": {
+          "maxFailures": { "type": "number", "default": 2, "description": "Escalate to Opus after this many consecutive failures" }
+        }
+      },
+      "routing": {
+        "type": "object",
+        "properties": {
+          "general": { "type": "string", "default": "moonshot/kimi-k2.5" },
+          "coding": { "type": "string", "default": "minimax/MiniMax-M2.1" },
+          "architect": { "type": "string", "default": "anthropic/claude-opus-4-5-20251101" }
+        }
+      },
+      "thresholds": {
+        "type": "object",
+        "properties": {
+          "general": { "type": "number", "default": 0.75 },
+          "coding": { "type": "number", "default": 0.80 },
+          "architecture": { "type": "number", "default": 0.85 }
+        }
+      }
+    }
+  },
+
+  "hooks": {
+    "beforeRequest": {
+      "handler": "./dist/index.js",
+      "export": "beforeRequest",
+      "priority": 100
+    },
+    "afterResponse": {
+      "handler": "./dist/index.js",
+      "export": "afterResponse",
+      "priority": 100
+    }
+  }
+}

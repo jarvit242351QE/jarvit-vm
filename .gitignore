@@ -2,3 +2,13 @@ node_modules/
 *.tgz
 release-pkg/
 /manifest.json
+/jarvit-vm.tar.gz
+
+# TypeScript build artifacts (source maps and declarations)
+*.d.ts.map
+*.js.map
+
+# Keep compiled JS in dist/ (needed for plugin distribution)
+# Only ignore d.ts files
+*.d.ts
+!plugins/*/dist/*.js

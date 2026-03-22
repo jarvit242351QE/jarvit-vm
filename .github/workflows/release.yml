@@ -33,23 +33,32 @@ jobs:
           # Create the files/ directory structure that mirrors the VM filesystem
           mkdir -p release-pkg/files/opt/jarvit/scripts
           mkdir -p release-pkg/files/opt/jarvit/plugins/vm-updater/dist
+          mkdir -p release-pkg/files/opt/jarvit/plugins/jarvit-router
+          mkdir -p release-pkg/files/opt/jarvit/plugins/memory-core
+          mkdir -p release-pkg/files/opt/jarvit/config
 
           # Copy update scripts
           cp scripts/vm-auto-update.sh release-pkg/files/opt/jarvit/scripts/
           cp scripts/vm-simple-update.sh release-pkg/files/opt/jarvit/scripts/
           chmod +x release-pkg/files/opt/jarvit/scripts/*.sh
 
-          # Copy vm-updater plugin
+          # Copy vm-updater plugin (including root index.js for plugin discovery)
+          cp plugins/vm-updater/index.js release-pkg/files/opt/jarvit/plugins/vm-updater/
           cp plugins/vm-updater/jarvit.plugin.json release-pkg/files/opt/jarvit/plugins/vm-updater/
           cp plugins/vm-updater/package.json release-pkg/files/opt/jarvit/plugins/vm-updater/
-          cp -r plugins/vm-updater/dist/* release-pkg/files/opt/jarvit/plugins/vm-updater/dist/
+          cp plugins/vm-updater/dist/index.js release-pkg/files/opt/jarvit/plugins/vm-updater/dist/
 
-          # Copy config template (users can customize — protected during updates)
+          # Copy jarvit-router plugin
+          cp plugins/jarvit-router/openclaw.plugin.json release-pkg/files/opt/jarvit/plugins/jarvit-router/
+          cp plugins/jarvit-router/package.json release-pkg/files/opt/jarvit/plugins/jarvit-router/
+
+          # Copy memory-core plugin
+          cp plugins/memory-core/index.ts release-pkg/files/opt/jarvit/plugins/memory-core/
+          cp plugins/memory-core/jarvit.plugin.json release-pkg/files/opt/jarvit/plugins/memory-core/
+          cp plugins/memory-core/package.json release-pkg/files/opt/jarvit/plugins/memory-core/
+
+          # Copy config template (protected during updates)
           cp config/jarvit.json release-pkg/files/opt/jarvit/config/jarvit.json || true
-
-          # Copy systemd units
-          cp scripts/jarvit-vm-update.timer release-pkg/files/opt/jarvit/scripts/
-          cp scripts/jarvit-vm-update.service release-pkg/files/opt/jarvit/scripts/
 
           # Copy manifest and changelog
           cp manifest.json release-pkg/

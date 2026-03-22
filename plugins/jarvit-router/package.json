@@ -1,0 +1,15 @@
+{
+  "name": "jarvit-router",
+  "version": "1.0.0",
+  "description": "JARVIT semantic intent router plugin for OpenClaw",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}

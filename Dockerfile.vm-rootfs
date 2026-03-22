@@ -1,0 +1,169 @@
+# =============================================================================
+# JARVIT Firecracker MicroVM Root Filesystem
+# =============================================================================
+# Contains: Node.js 22 + OpenClaw + jarvit-router plugin + init script
+#
+# Why Debian (not Alpine): OpenClaw depends on sharp, node-pty, sqlite-vec —
+# all native bindings that need glibc. Alpine uses musl, causing build failures.
+#
+# Build:
+#   docker build -f Dockerfile.vm-rootfs -t jarvit-vm-rootfs .
+#
+# Extract rootfs as ext4 image:
+#   CONTAINER=$(docker create jarvit-vm-rootfs)
+#   docker export $CONTAINER | tar -C /tmp/rootfs -xf -
+#   truncate -s 512M rootfs.ext4
+#   mkfs.ext4 -d /tmp/rootfs rootfs.ext4
+#   docker rm $CONTAINER && rm -rf /tmp/rootfs
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Builder — compile OpenClaw + jarvit-router plugin
+# ---------------------------------------------------------------------------
+FROM node:22-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ git curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install pnpm (required by OpenClaw build scripts)
+RUN npm install -g pnpm
+
+# Build OpenClaw from source
+COPY openclaw-core/ /build/openclaw-core/
+WORKDIR /build/openclaw-core
+RUN OPENCLAW_A2UI_SKIP_MISSING=1 npm install --legacy-peer-deps && \
+    OPENCLAW_A2UI_SKIP_MISSING=1 npm run build && \
+    npm install -g . --legacy-peer-deps && \
+    npm ls -g node-llama-cpp 2>/dev/null && npm uninstall -g node-llama-cpp || true
+
+# Build jarvit-router plugin (TypeScript → JS)
+COPY plugins/jarvit-router/ /build/jarvit-router/
+WORKDIR /build/jarvit-router
+RUN npm install && npm run build
+# Fix manifest: handler path must match tsconfig output
+# Rename manifest to the filename OpenClaw's plugin scanner expects
+RUN sed -i 's|"./index.js"|"./dist/index.js"|g' openclaw.plugin.json && \
+    cp openclaw.plugin.json jarvit.plugin.json
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runtime — minimal image with only what's needed
+# ---------------------------------------------------------------------------
+FROM node:22-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iproute2 curl ca-certificates gosu && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy OpenClaw (globally installed binary + node_modules)
+# npm install -g creates a symlink at /usr/local/lib/node_modules/jarvit -> /build/openclaw-core.
+# Docker COPY preserves symlinks, so we copy the source tree directly to the global path.
+COPY --from=builder /build/openclaw-core/dist/ /usr/local/lib/node_modules/jarvit/dist/
+COPY --from=builder /build/openclaw-core/node_modules/ /usr/local/lib/node_modules/jarvit/node_modules/
+COPY --from=builder /build/openclaw-core/package.json /usr/local/lib/node_modules/jarvit/package.json
+COPY --from=builder /build/openclaw-core/jarvit.mjs /usr/local/lib/node_modules/jarvit/jarvit.mjs
+COPY --from=builder /build/openclaw-core/openclaw.mjs /usr/local/lib/node_modules/jarvit/openclaw.mjs
+# NOTE: Extensions (discord, telegram, etc.) intentionally NOT included.
+# VM only uses jarvit-router + memory-core from /opt/jarvit/plugins.
+# Including all extensions would cause config validation errors since most
+# have openclaw.plugin.json (not jarvit.plugin.json) manifests.
+COPY --from=builder /build/openclaw-core/assets/ /usr/local/lib/node_modules/jarvit/assets/
+COPY --from=builder /build/openclaw-core/skills/ /usr/local/lib/node_modules/jarvit/skills/
+COPY --from=builder /build/openclaw-core/docs/reference/templates/ /usr/local/lib/node_modules/jarvit/docs/reference/templates/
+# Create CLI symlink (must point to the package so ./dist/entry.js resolves correctly)
+RUN ln -sf ../lib/node_modules/jarvit/jarvit.mjs /usr/local/bin/jarvit
+
+# Stub Control UI — OpenClaw looks for dist/control-ui/index.html and returns
+# HTTP 503 on ALL paths when it's missing. The Host Agent health monitor does
+# HTTP GET /health and expects 200 OK, so we provide a minimal stub.
+# The SPA fallback in the gateway serves index.html for any unknown path.
+RUN mkdir -p /usr/local/lib/node_modules/jarvit/dist/control-ui && \
+    echo '<!DOCTYPE html><html><head><title>JARVIT VM</title></head><body><p>OK</p></body></html>' \
+    > /usr/local/lib/node_modules/jarvit/dist/control-ui/index.html
+
+# Copy jarvit-router plugin (compiled)
+COPY --from=builder /build/jarvit-router/jarvit.plugin.json /opt/jarvit/plugins/jarvit-router/jarvit.plugin.json
+COPY --from=builder /build/jarvit-router/package.json /opt/jarvit/plugins/jarvit-router/package.json
+COPY --from=builder /build/jarvit-router/dist/ /opt/jarvit/plugins/jarvit-router/dist/
+
+# Copy memory-core extension (Hindsight buffer/flush/recall via AI Proxy)
+# Loaded by plugin scanner via plugins.load.paths in jarvit.json.
+# Uses jiti for runtime TypeScript compilation — no pre-build needed.
+COPY --from=builder /build/openclaw-core/extensions/memory-core/index.ts /opt/jarvit/plugins/memory-core/index.ts
+COPY --from=builder /build/openclaw-core/extensions/memory-core/package.json /opt/jarvit/plugins/memory-core/package.json
+COPY --from=builder /build/openclaw-core/extensions/memory-core/jarvit.plugin.json /opt/jarvit/plugins/memory-core/jarvit.plugin.json
+
+# ---------------------------------------------------------------------------
+# Security hardening
+# ---------------------------------------------------------------------------
+# CVE-2026-24763: Block env vars that allow code injection
+ENV LD_PRELOAD="" \
+    LD_LIBRARY_PATH="" \
+    DYLD_INSERT_LIBRARIES="" \
+    NODE_OPTIONS="" \
+    PYTHONPATH="" \
+    PERL5LIB="" \
+    RUBYLIB="" \
+    CLASSPATH="" \
+    LD_AUDIT="" \
+    LD_DEBUG="" \
+    LD_PROFILE=""
+
+# Remove setuid/setgid binaries
+RUN find / -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
+
+# Create non-root user for the Node.js process.
+# init.sh (PID 1) still runs as root for mount/network ops,
+# then drops privileges to this user via gosu before starting OpenClaw.
+# UID 1000 is taken by "node" in the base image, so we use 1001.
+RUN adduser --disabled-password --gecos "" --uid 1001 jarvit
+
+# Remove package manager (prevent installing software inside the VM)
+# Can't use apt-get purge because dash/grep/perl-base depend on dpkg.
+# Instead, just delete the binaries and caches so users can't install packages.
+RUN rm -f /usr/bin/apt* /usr/bin/dpkg* /usr/sbin/dpkg* && \
+    rm -rf /var/lib/apt /var/cache/apt /etc/apt
+
+# ---------------------------------------------------------------------------
+# Init script (PID 1) — handles boot: MMDS, networking, /data mount
+# ---------------------------------------------------------------------------
+COPY init.sh /sbin/init
+RUN chmod 755 /sbin/init
+
+# ---------------------------------------------------------------------------
+# Application files — entrypoint, config template, memory seed
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/jarvit/config /opt/jarvit/scripts /opt/jarvit/secrets /data/updates /data/logs
+COPY entrypoint.sh /opt/jarvit/entrypoint.sh
+RUN chmod 755 /opt/jarvit/entrypoint.sh
+COPY config/jarvit.json /opt/jarvit/config/jarvit.json
+COPY memory-tree-seed.tar.gz /opt/jarvit/memory-tree-seed.tar.gz
+
+# ---------------------------------------------------------------------------
+# VM Auto-Update System
+# ---------------------------------------------------------------------------
+# Scripts that poll GitHub releases and apply updates.
+# The github-token is injected at VM creation time by Host Agent (via MMDS overlay).
+# The vm-version file tracks the current installed version.
+COPY vm-update/vm-auto-update.sh /opt/jarvit/scripts/vm-auto-update.sh
+COPY vm-update/vm-simple-update.sh /opt/jarvit/scripts/vm-simple-update.sh
+RUN chmod 755 /opt/jarvit/scripts/vm-auto-update.sh /opt/jarvit/scripts/vm-simple-update.sh
+
+# vm-updater plugin (OpenClaw plugin for intelligent merge)
+COPY vm-update/vm-updater-plugin/ /opt/jarvit/plugins/vm-updater/
+
+# Initial version marker (set to BUILD_VERSION at image build time)
+ARG VM_VERSION=v0.1.0
+RUN echo "$VM_VERSION" > /opt/jarvit/vm-version
+
+# Initial manifest (empty — first update will populate it)
+RUN echo '{"version":"'$VM_VERSION'","files":{}}' > /opt/jarvit/vm-manifest.json
+
+# ---------------------------------------------------------------------------
+# Data mount point (user's persistent volume)
+# ---------------------------------------------------------------------------
+RUN mkdir -p /data
+
+LABEL org.opencontainers.image.title="jarvit-vm-rootfs"
+LABEL org.opencontainers.image.description="JARVIT Firecracker microVM root filesystem (Debian + OpenClaw)"
+CMD ["/sbin/init"]
