@@ -51,25 +51,36 @@ export JARVIT_HOME="/data"
 # The VM has no systemd, so we run the update checker as a background loop.
 # It sleeps 30 min between checks, with a random jitter of 0-300s to avoid
 # all VMs hitting GitHub API simultaneously.
+
+# Create log directory BEFORE starting the background loop
+mkdir -p /data/logs /data/updates
+
 if [ -x /opt/jarvit/scripts/vm-auto-update.sh ]; then
     log "Starting auto-update poller (30min interval, public repo — no token needed)"
     (
+        # Disable set -e in this subshell -- we handle errors ourselves.
+        # set -e is inherited from the parent and can kill the entire loop
+        # if any command (od, arithmetic, etc.) returns non-zero.
+        set +e
+
+        # Ignore SIGHUP so this loop survives when the parent shell does
+        # 'exec' to replace itself with the jarvit gateway process.
+        trap '' HUP
+
         # Wait 2 minutes after boot before first check (let OpenClaw start)
         sleep 120
+
         while true; do
-            /opt/jarvit/scripts/vm-auto-update.sh >> /data/logs/vm-update.log 2>&1 || true
+            /opt/jarvit/scripts/vm-auto-update.sh >> /data/logs/vm-update.log 2>&1
             # 1800s = 30min, plus random jitter 0-300s
             JITTER=$(( $(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ') % 300 ))
-            sleep $(( 1800 + JITTER ))
+            sleep $(( 1800 + ${JITTER:-0} ))
         done
     ) &
     log "Auto-update poller PID: $!"
 else
     log "Auto-update: skipped (no update script found)"
 fi
-
-# Ensure log directory exists for the update poller
-mkdir -p /data/logs
 
 # Start OpenClaw (replaces this shell as the main process)
 log "Starting OpenClaw on :18789"

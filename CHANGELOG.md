@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.0 (2026-03-22)
+
+### Fixed
+- Fixed auto-update poller not starting: removed github-token requirement from entrypoint.sh
+- Fixed background update loop: added `set +e` and `trap '' HUP` to survive parent exec
+- Moved `mkdir -p /data/logs /data/updates` before background loop start
+
+### Added
+- E2E auto-update audit test: verifies poller, download, apply, and user modification preservation
+
 ## v1.0.2 (2026-03-22)
 
 ### Fixed
