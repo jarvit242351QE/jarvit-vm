@@ -101,12 +101,14 @@ log "New version available: $CURRENT -> $LATEST"
 mkdir -p "$UPDATES_DIR"
 
 # Get the download URL for jarvit-vm.tar.gz asset
+# Use browser_download_url (direct CDN link) instead of API asset URL.
+# This avoids counting against the GitHub API rate limit (60/hr unauthenticated).
 DOWNLOAD_URL=$(echo "$RELEASE_JSON" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for asset in data.get('assets', []):
     if asset['name'] == 'jarvit-vm.tar.gz':
-        print(asset['url'])
+        print(asset.get('browser_download_url', asset['url']))
         break
 " 2>/dev/null)
 
