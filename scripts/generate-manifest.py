@@ -89,6 +89,10 @@ def main():
     path_mappings.extend([
         ("scripts/vm-auto-update.sh", "/opt/jarvit/scripts/vm-auto-update.sh"),
         ("scripts/vm-simple-update.sh", "/opt/jarvit/scripts/vm-simple-update.sh"),
+        ("scripts/json-get.js", "/opt/jarvit/scripts/json-get.js"),
+        ("scripts/json-asset-url.js", "/opt/jarvit/scripts/json-asset-url.js"),
+        ("scripts/version-validate.js", "/opt/jarvit/scripts/version-validate.js"),
+        ("scripts/version-compare.js", "/opt/jarvit/scripts/version-compare.js"),
     ])
 
     # Skip patterns: build/dev artifacts that don't need checksum tracking

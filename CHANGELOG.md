@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.5 (2026-03-22)
+
+### Fixed
+- **Node v22 compatibility**: Replaced all inline `node -e` with external JS files to avoid shell quoting issues with Node v22's TypeScript stripping
+- Replaced gzip magic byte check from inline node to shell `dd`/`od`
+
+### Added
+- `json-get.js`, `json-asset-url.js`, `version-validate.js`, `version-compare.js` helper scripts
+
 ## v1.2.4 (2026-03-22)
 
 ### Changed

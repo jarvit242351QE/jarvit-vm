@@ -47,55 +47,25 @@ LOCK_FILE="/tmp/vm-update.lock"
 log() { echo "${LOG_TAG} $(date -Iseconds 2>/dev/null || date) $1"; }
 die() { log "FATAL: $1"; exit 1; }
 
-# Helper: parse JSON with node (python3 not available in VM)
+# ---------------------------------------------------------------------------
+# Helper scripts: external JS files to avoid shell quoting issues with node -e.
+# Node v22+ has TypeScript stripping which can mangle inline -e scripts.
+# ---------------------------------------------------------------------------
+SCRIPTS_DIR="/opt/jarvit/scripts"
+
+# Helper: parse JSON field (e.g., json_get "tag_name")
 json_get() {
-    node -e "
-        let d='';
-        process.stdin.on('data',c=>d+=c);
-        process.stdin.on('end',()=>{
-            try{
-                const o=JSON.parse(d);
-                const keys='$1'.split('.');
-                let v=o;
-                for(const k of keys) v=v[k];
-                if(v!==undefined&&v!==null) process.stdout.write(String(v));
-            }catch(e){}
-        });
-    "
+    node "$SCRIPTS_DIR/json-get.js" "$1"
 }
 
 # Helper: find asset download URL by name
 json_asset_url() {
-    node -e "
-        let d='';
-        process.stdin.on('data',c=>d+=c);
-        process.stdin.on('end',()=>{
-            try{
-                const o=JSON.parse(d);
-                const a=(o.assets||[]).find(a=>a.name==='$1');
-                if(a) process.stdout.write(a.browser_download_url||a.url);
-            }catch(e){}
-        });
-    "
+    node "$SCRIPTS_DIR/json-asset-url.js" "$1"
 }
 
-# ---------------------------------------------------------------------------
 # Validate version string: only [a-zA-Z0-9._-] allowed.
-# Prevents path traversal (e.g. "../../etc") in version tags.
-# ---------------------------------------------------------------------------
 validate_version() {
-    echo "$1" | node -e "
-        let d='';
-        process.stdin.on('data',c=>d+=c);
-        process.stdin.on('end',()=>{
-            const v=d.trim();
-            if(/^[a-zA-Z0-9._-]+$/.test(v) && v.length>0 && v.length<128){
-                process.stdout.write('ok');
-            }else{
-                process.stdout.write('bad');
-            }
-        });
-    "
+    echo "$1" | node "$SCRIPTS_DIR/version-validate.js"
 }
 
 # ---------------------------------------------------------------------------
@@ -225,21 +195,7 @@ fi
 # Prevents downgrades (e.g. rootfs has v1.2.0 but latest release is v1.1.1)
 # ---------------------------------------------------------------------------
 is_newer() {
-    echo "$1 $2" | node -e "
-        let d='';
-        process.stdin.on('data',c=>d+=c);
-        process.stdin.on('end',()=>{
-            const [v1,v2]=d.trim().split(' ');
-            const a=v1.replace(/^v/,'').split('.').map(Number);
-            const b=v2.replace(/^v/,'').split('.').map(Number);
-            for(let i=0;i<3;i++){
-                const x=a[i]||0, y=b[i]||0;
-                if(x>y){process.stdout.write('yes');process.exit(0);}
-                if(x<y){process.stdout.write('no');process.exit(0);}
-            }
-            process.stdout.write('no');
-        });
-    " 2>/dev/null
+    echo "$1 $2" | node "$SCRIPTS_DIR/version-compare.js" 2>/dev/null
 }
 
 IS_NEWER=$(is_newer "$LATEST" "$CURRENT")
@@ -289,17 +245,9 @@ curl -sfL --connect-timeout 10 --max-time 120 \
     exit 2
 }
 
-# Verify the download is a gzip file (check magic bytes with node)
-IS_GZ=$(node -e "
-    const fs=require('fs');
-    try{
-        const buf=Buffer.alloc(2);
-        const fd=fs.openSync('$TARBALL','r');
-        fs.readSync(fd,buf,0,2,0);
-        fs.closeSync(fd);
-        process.stdout.write(buf[0]===0x1f&&buf[1]===0x8b?'yes':'no');
-    }catch(e){process.stdout.write('no');}
-" 2>/dev/null)
+# Verify the download is a gzip file (check magic bytes)
+# gzip files start with 1f 8b
+IS_GZ=$(dd if="$TARBALL" bs=1 count=2 2>/dev/null | od -An -tx1 | tr -d ' ' | grep -q "1f8b" && echo "yes" || echo "no")
 
 if [ "$IS_GZ" != "yes" ]; then
     log "Downloaded file is not a valid gzip tarball. Removing."

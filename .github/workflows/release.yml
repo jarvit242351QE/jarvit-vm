@@ -43,10 +43,14 @@ jobs:
           mkdir -p release-pkg/files/opt/jarvit/plugins/memory-core
           mkdir -p release-pkg/files/opt/jarvit/config
 
-          # Copy update scripts
+          # Copy update scripts and helper JS files
           cp scripts/vm-auto-update.sh release-pkg/files/opt/jarvit/scripts/
           cp scripts/vm-simple-update.sh release-pkg/files/opt/jarvit/scripts/
           cp scripts/generate-manifest.py release-pkg/files/opt/jarvit/scripts/
+          cp scripts/json-get.js release-pkg/files/opt/jarvit/scripts/
+          cp scripts/json-asset-url.js release-pkg/files/opt/jarvit/scripts/
+          cp scripts/version-validate.js release-pkg/files/opt/jarvit/scripts/
+          cp scripts/version-compare.js release-pkg/files/opt/jarvit/scripts/
           chmod +x release-pkg/files/opt/jarvit/scripts/*.sh
 
           # Copy entrypoint (needed for rootfs bootstrap injection)
