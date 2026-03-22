@@ -41,3 +41,4 @@
 
 ### Added
 - Initial test release for auto-update system verification
+v1.1.1 - user mod preservation test
