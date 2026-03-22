@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.3 (2026-03-22)
+
+### Fixed
+- **is_newer function**: Use stdin pipe instead of shell variable interpolation in node -e argument to avoid quoting issues in /bin/sh
+- **return vs process.exit**: Replaced `return` (invalid at top-level in node -e) with `process.exit(0)`
+
 ## v1.2.2 (2026-03-22)
 
 ### Changed

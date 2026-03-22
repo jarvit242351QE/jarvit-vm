@@ -225,15 +225,20 @@ fi
 # Prevents downgrades (e.g. rootfs has v1.2.0 but latest release is v1.1.1)
 # ---------------------------------------------------------------------------
 is_newer() {
-    node -e "
-        const a='$1'.replace(/^v/,'').split('.').map(Number);
-        const b='$2'.replace(/^v/,'').split('.').map(Number);
-        for(let i=0;i<3;i++){
-            const x=a[i]||0, y=b[i]||0;
-            if(x>y){process.stdout.write('yes');return;}
-            if(x<y){process.stdout.write('no');return;}
-        }
-        process.stdout.write('no');
+    echo "$1 $2" | node -e "
+        let d='';
+        process.stdin.on('data',c=>d+=c);
+        process.stdin.on('end',()=>{
+            const [v1,v2]=d.trim().split(' ');
+            const a=v1.replace(/^v/,'').split('.').map(Number);
+            const b=v2.replace(/^v/,'').split('.').map(Number);
+            for(let i=0;i<3;i++){
+                const x=a[i]||0, y=b[i]||0;
+                if(x>y){process.stdout.write('yes');process.exit(0);}
+                if(x<y){process.stdout.write('no');process.exit(0);}
+            }
+            process.stdout.write('no');
+        });
     " 2>/dev/null
 }
 
