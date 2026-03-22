@@ -185,17 +185,16 @@ ip link set eth0 up
 ip route add default via "${GATEWAY_IP}"
 
 # ---------------------------------------------------------------------------
-# Step 3: DNS — intentionally disabled
+# Step 3: DNS — public resolvers via relay
 # ---------------------------------------------------------------------------
-# VMs must NOT resolve DNS. All external communication goes through the
-# gateway (which the VM reaches by IP). This prevents:
-#   - DNS exfiltration / tunneling
-#   - VMs reaching arbitrary internet hosts
-#   - Data leaks through DNS queries
-#
-# Do NOT create /etc/resolv.conf.
+# VMs need DNS for internet access (auto-updates, GitHub API, etc).
+# DNS queries route through the relay tunnel like all other traffic.
+# The container sandbox (Firecracker isolation + resource limits) is the
+# protection layer — not network blocking.
 
-log "DNS disabled (by design)"
+log "Configuring DNS (public resolvers via relay)"
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+echo "nameserver 1.1.1.1" >> /etc/resolv.conf
 
 # ---------------------------------------------------------------------------
 # Step 4: Mount /data volume (user's persistent storage)
