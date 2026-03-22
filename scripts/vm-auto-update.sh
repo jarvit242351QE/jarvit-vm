@@ -221,6 +221,30 @@ if [ "$LATEST" = "$CURRENT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Semantic version check: only update if LATEST > CURRENT
+# Prevents downgrades (e.g. rootfs has v1.2.0 but latest release is v1.1.1)
+# ---------------------------------------------------------------------------
+is_newer() {
+    node -e "
+        const a='$1'.replace(/^v/,'').split('.').map(Number);
+        const b='$2'.replace(/^v/,'').split('.').map(Number);
+        for(let i=0;i<3;i++){
+            const x=a[i]||0, y=b[i]||0;
+            if(x>y){process.stdout.write('yes');return;}
+            if(x<y){process.stdout.write('no');return;}
+        }
+        process.stdout.write('no');
+    " 2>/dev/null
+}
+
+IS_NEWER=$(is_newer "$LATEST" "$CURRENT")
+if [ "$IS_NEWER" != "yes" ]; then
+    log "Latest ($LATEST) is not newer than current ($CURRENT). Skipping."
+    log_disk_usage
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Double-check via vm-updater health endpoint (if available)
 # Catches the case where VERSION_FILE is stale but the plugin knows better
 # ---------------------------------------------------------------------------
@@ -317,8 +341,14 @@ RESPONSE=$(curl -sf --connect-timeout 15 --max-time 300 \
     -d "{\"version\":\"$LATEST\",\"path\":\"$EXTRACT_DIR\",\"previous\":\"$CURRENT\"}" \
     2>/dev/null) || {
     log "vm-updater endpoint unreachable. Falling back to simple update."
-    /opt/jarvit/scripts/vm-simple-update.sh "$EXTRACT_DIR" "$LATEST" "$CURRENT"
+    # Copy the simple-update script to /tmp before running it.
+    # The script may update itself (/opt/jarvit/scripts/vm-simple-update.sh)
+    # during execution, which corrupts the running shell's file descriptor.
+    cp /opt/jarvit/scripts/vm-simple-update.sh /tmp/vm-simple-update-run.sh
+    chmod +x /tmp/vm-simple-update-run.sh
+    /tmp/vm-simple-update-run.sh "$EXTRACT_DIR" "$LATEST" "$CURRENT"
     FALLBACK_RC=$?
+    rm -f /tmp/vm-simple-update-run.sh
 
     # Clean tmp dir (tarball already gone, extract dir still there)
     rm -rf "$TMP_DIR"

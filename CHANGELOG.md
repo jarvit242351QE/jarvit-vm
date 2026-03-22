@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.2.1 (2026-03-22)
+
+### Fixed
+- **Version comparison**: Auto-update now checks semantic versioning (prevents downgrades from v1.2.0 to v1.1.1)
+- **Self-replacement crash**: vm-auto-update.sh copies vm-simple-update.sh to /tmp before running it (prevents shell corruption when the script replaces itself on disk)
+- **Manifest format**: All releases now use structured manifest with file types (security/system/config/feature)
+
+### Changed
+- Auto-update poller requires LATEST > CURRENT (not just LATEST != CURRENT)
+- Simple update fallback runs from /tmp copy to prevent mid-execution file corruption
+
+## v1.2.0 (2026-03-22)
+
+### Added
+- vm-updater v2.0.0: AI-powered merge with security-first updates
+- Aggressive disk cleanup in auto-update system
+- Obsolete file cleanup during updates
+- Manifest now includes file types (security, system, config, feature)
+
 ## v1.1.0 (2026-03-22)
 
 ### Fixed
@@ -41,4 +60,3 @@
 
 ### Added
 - Initial test release for auto-update system verification
-v1.1.1 - user mod preservation test
