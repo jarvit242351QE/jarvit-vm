@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.2 (2026-03-22)
+
+### Changed
+- E2E test release: verifies auto-update downloads and applies update from v1.2.1 to v1.2.2
+
 ## v1.2.1 (2026-03-22)
 
 ### Fixed
