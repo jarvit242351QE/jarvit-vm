@@ -24,7 +24,7 @@ REPO="jarvit242351QE/jarvit-vm"
 VERSION_FILE="/opt/jarvit/vm-version"
 UPDATES_DIR="/data/updates"
 GITHUB_TOKEN_FILE="/opt/jarvit/secrets/github-token"
-OPENCLAW_URL="http://127.0.0.1:18789"
+UPDATER_URL="http://127.0.0.1:18790"
 AUTH_HEADER=""
 LOG_TAG="[vm-update]"
 LOCK_FILE="/tmp/vm-update.lock"
@@ -184,10 +184,10 @@ fi
 # ---------------------------------------------------------------------------
 # Call the vm-updater plugin to apply the update
 # ---------------------------------------------------------------------------
-log "Calling vm-updater plugin at $OPENCLAW_URL/system/update ..."
+log "Calling vm-updater plugin at $UPDATER_URL/system/update ..."
 
 RESPONSE=$(curl -sf --connect-timeout 15 --max-time 300 \
-    -X POST "$OPENCLAW_URL/system/update" \
+    -X POST "$UPDATER_URL/system/update" \
     -H "Content-Type: application/json" \
     -d "{\"version\":\"$LATEST\",\"path\":\"$EXTRACT_DIR\",\"previous\":\"$CURRENT\"}" \
     2>/dev/null) || {

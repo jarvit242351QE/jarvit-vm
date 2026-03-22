@@ -2,8 +2,8 @@
   "$schema": "https://openclaw.ai/schemas/plugin.json",
   "id": "vm-updater",
   "name": "vm-updater",
-  "version": "1.0.2",
-  "description": "Handles VM software updates with intelligent 3-way merge. Exposes /system/update HTTP endpoint.",
+  "version": "2.0.0",
+  "description": "Handles VM software updates with AI-powered merge. Runs standalone server on port 18790 to avoid SPA fallback.",
 
   "configSchema": {
     "type": "object",
