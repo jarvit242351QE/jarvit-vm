@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.9 (2026-03-22)
+
+### Changed
+- TEST: User modification preservation during update
+
 ## v1.2.8 (2026-03-22)
 
 ### Changed
