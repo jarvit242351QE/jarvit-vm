@@ -53,7 +53,9 @@ die() { log "FATAL: $1"; exit 1; }
 # ---------------------------------------------------------------------------
 SCRIPTS_DIR="/opt/jarvit/scripts"
 
-# Helper: parse JSON field (e.g., json_get "tag_name")
+# Helper: parse JSON field (e.g., printf '%s\n' "$JSON" | json_get "tag_name")
+# IMPORTANT: Always pipe with printf '%s\n', NOT echo. Dash's echo can
+# interpret \n inside JSON strings, corrupting the data.
 json_get() {
     node "$SCRIPTS_DIR/json-get.js" "$1"
 }
@@ -161,7 +163,7 @@ RELEASE_JSON=$(curl -sf --connect-timeout 10 --max-time 30 \
     exit 0
 }
 
-LATEST=$(echo "$RELEASE_JSON" | json_get "tag_name")
+LATEST=$(printf '%s\n' "$RELEASE_JSON" | json_get "tag_name")
 
 if [ -z "$LATEST" ]; then
     log "Could not parse latest version from GitHub. Skipping."
@@ -224,7 +226,7 @@ log "New version available: $CURRENT -> $LATEST"
 # ---------------------------------------------------------------------------
 # Download the release tarball into /data/updates/tmp/
 # ---------------------------------------------------------------------------
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | json_asset_url "jarvit-vm.tar.gz")
+DOWNLOAD_URL=$(printf '%s\n' "$RELEASE_JSON" | json_asset_url "jarvit-vm.tar.gz")
 
 if [ -z "$DOWNLOAD_URL" ]; then
     log "No jarvit-vm.tar.gz asset in release $LATEST. Skipping."
@@ -330,7 +332,7 @@ mkdir -p "$TMP_DIR"
 log "Cleaned up tmp dir"
 
 # Check if the update was successful
-UPDATE_OK=$(echo "$RESPONSE" | json_get "status")
+UPDATE_OK=$(printf '%s\n' "$RESPONSE" | json_get "status")
 
 if [ "$UPDATE_OK" = "updated" ]; then
     echo "$LATEST" > "$VERSION_FILE"

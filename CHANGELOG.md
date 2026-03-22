@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.7 (2026-03-22)
+
+### Fixed
+- **JSON piping**: Use `printf '%s\n'` instead of `echo` when piping JSON through shell variables. Dash's echo interprets `\n` in JSON string values, corrupting the data and causing parse failures.
+
 ## v1.2.6 (2026-03-22)
 
 ### Changed
