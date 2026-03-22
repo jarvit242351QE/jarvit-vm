@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.4 (2026-03-22)
+
+### Changed
+- E2E test: verifies auto-update from v1.2.3 to v1.2.4 with fixed version comparison
+
 ## v1.2.3 (2026-03-22)
 
 ### Fixed
