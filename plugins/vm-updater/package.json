@@ -1,6 +1,6 @@
 {
   "name": "jarvit-vm-updater",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "JARVIT VM auto-update handler plugin",
   "main": "dist/index.js",
   "scripts": {
