@@ -62,7 +62,6 @@ const PROTECTED_PATHS = new Set([
     "/opt/jarvit/config/jarvit.json",
     "/data/config/jarvit.json",
     "/data/.jarvit/jarvit.json",
-    "/opt/jarvit/secrets/github-token",
 ]);
 // Files that should always be replaced (system files, not user-facing)
 const ALWAYS_REPLACE = new Set([

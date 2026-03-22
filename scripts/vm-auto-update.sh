@@ -22,6 +22,9 @@ VERSION_FILE="/opt/jarvit/vm-version"
 UPDATES_DIR="/data/updates"
 GITHUB_TOKEN_FILE="/opt/jarvit/secrets/github-token"
 OPENCLAW_URL="http://127.0.0.1:18789"
+# Auth headers — token is OPTIONAL (repo is public).
+# If present, it raises the GitHub API rate limit from 60/hr to 5000/hr.
+AUTH_HEADER=""
 LOG_TAG="[vm-update]"
 LOCK_FILE="/tmp/vm-update.lock"
 
@@ -49,8 +52,11 @@ trap 'rm -f "$LOCK_FILE"' EXIT
 CURRENT=$(cat "$VERSION_FILE" 2>/dev/null || echo "none")
 TOKEN=$(cat "$GITHUB_TOKEN_FILE" 2>/dev/null || true)
 
-if [ -z "$TOKEN" ]; then
-    die "No GitHub token at $GITHUB_TOKEN_FILE"
+# Token is optional — public repo works without auth.
+# If present, use it for higher rate limits (5000/hr vs 60/hr).
+if [ -n "$TOKEN" ]; then
+    AUTH_HEADER="Authorization: token $TOKEN"
+    log "Using GitHub token for higher rate limits"
 fi
 
 log "Current version: $CURRENT"
@@ -59,7 +65,7 @@ log "Current version: $CURRENT"
 # Check latest release from GitHub API
 # ---------------------------------------------------------------------------
 RELEASE_JSON=$(curl -sf --connect-timeout 10 --max-time 30 \
-    -H "Authorization: token $TOKEN" \
+    ${AUTH_HEADER:+-H "$AUTH_HEADER"} \
     -H "Accept: application/vnd.github.v3+json" \
     "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null) || {
     log "Could not reach GitHub API (network issue or no releases yet). Skipping."
@@ -113,7 +119,7 @@ TARBALL="$UPDATES_DIR/jarvit-vm-$LATEST.tar.gz"
 
 log "Downloading $LATEST..."
 curl -sfL --connect-timeout 10 --max-time 120 \
-    -H "Authorization: token $TOKEN" \
+    ${AUTH_HEADER:+-H "$AUTH_HEADER"} \
     -H "Accept: application/octet-stream" \
     -o "$TARBALL" \
     "$DOWNLOAD_URL" || {
