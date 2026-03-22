@@ -24,6 +24,12 @@ jobs:
           npm install
           npm run build
 
+      - name: Build jarvit-router plugin
+        working-directory: plugins/jarvit-router
+        run: |
+          npm install
+          npm run build
+
       - name: Generate manifest
         run: |
           python3 scripts/generate-manifest.py "${{ github.ref_name }}"
@@ -48,9 +54,11 @@ jobs:
           cp plugins/vm-updater/package.json release-pkg/files/opt/jarvit/plugins/vm-updater/
           cp plugins/vm-updater/dist/index.js release-pkg/files/opt/jarvit/plugins/vm-updater/dist/
 
-          # Copy jarvit-router plugin
+          # Copy jarvit-router plugin (manifest + compiled JS)
+          mkdir -p release-pkg/files/opt/jarvit/plugins/jarvit-router/dist
           cp plugins/jarvit-router/openclaw.plugin.json release-pkg/files/opt/jarvit/plugins/jarvit-router/
           cp plugins/jarvit-router/package.json release-pkg/files/opt/jarvit/plugins/jarvit-router/
+          cp plugins/jarvit-router/dist/index.js release-pkg/files/opt/jarvit/plugins/jarvit-router/dist/
 
           # Copy memory-core plugin
           cp plugins/memory-core/index.ts release-pkg/files/opt/jarvit/plugins/memory-core/

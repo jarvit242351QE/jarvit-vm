@@ -186,7 +186,7 @@ fi
 # ---------------------------------------------------------------------------
 log "Calling vm-updater plugin at $OPENCLAW_URL/system/update ..."
 
-RESPONSE=$(curl -sf --connect-timeout 5 --max-time 300 \
+RESPONSE=$(curl -sf --connect-timeout 15 --max-time 300 \
     -X POST "$OPENCLAW_URL/system/update" \
     -H "Content-Type: application/json" \
     -d "{\"version\":\"$LATEST\",\"path\":\"$EXTRACT_DIR\",\"previous\":\"$CURRENT\"}" \
