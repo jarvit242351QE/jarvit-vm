@@ -8,6 +8,8 @@
 #   - Uses checksums from manifest.json for comparison
 #   - Skips user config files entirely (safe default)
 #
+# Dependencies: node (available in VM rootfs; python3 is NOT)
+#
 # Usage: vm-simple-update.sh <update_dir> <new_version> <current_version>
 # =============================================================================
 
@@ -31,88 +33,66 @@ if [ ! -f "$UPDATE_DIR/manifest.json" ]; then
     exit 1
 fi
 
-# Read manifests using python3
-UPDATES=$(python3 -c "
-import json, hashlib, os, sys
+# Use node for JSON processing and checksum comparison
+UPDATES=$(node -e "
+const fs = require('fs');
+const crypto = require('crypto');
+const path = require('path');
 
-def file_sha256(path):
-    try:
-        h = hashlib.sha256()
-        with open(path, 'rb') as f:
-            for chunk in iter(lambda: f.read(8192), b''):
-                h.update(chunk)
-        return h.hexdigest()
-    except FileNotFoundError:
-        return None
+function fileSha256(p) {
+    try {
+        const buf = fs.readFileSync(p);
+        return crypto.createHash('sha256').update(buf).digest('hex');
+    } catch { return null; }
+}
 
-update_dir = '$UPDATE_DIR'
-manifest_path = '$MANIFEST_FILE'
+const updateDir = '$UPDATE_DIR';
+const manifestPath = '$MANIFEST_FILE';
 
-# Load new manifest
-with open(os.path.join(update_dir, 'manifest.json')) as f:
-    new_manifest = json.load(f)
+const newManifest = JSON.parse(fs.readFileSync(path.join(updateDir, 'manifest.json'), 'utf8'));
+let currentManifest = { files: {} };
+try { currentManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch {}
 
-# Load current manifest (from last install/update)
-try:
-    with open(manifest_path) as f:
-        current_manifest = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    current_manifest = {'files': {}}
+const newFiles = newManifest.files || {};
+const oldFiles = currentManifest.files || {};
 
-new_files = new_manifest.get('files', {})
-old_files = current_manifest.get('files', {})
-
-# Protected paths — never overwrite these in simple mode
-protected = {
+const protectedPaths = new Set([
     '/opt/jarvit/config/jarvit.json',
     '/data/config/jarvit.json',
     '/data/.jarvit/jarvit.json',
+    '/opt/jarvit/secrets/github-token',
+]);
+
+let updated = 0, skipped = 0, conflicts = 0;
+
+for (const [absPath, newChecksum] of Object.entries(newFiles)) {
+    if (protectedPaths.has(absPath)) { skipped++; continue; }
+
+    const oldChecksum = oldFiles[absPath];
+    const currentChecksum = fileSha256(absPath);
+
+    if (currentChecksum === newChecksum) continue;
+
+    if (oldChecksum === undefined || currentChecksum === null || currentChecksum === oldChecksum) {
+        const src = path.join(updateDir, 'files', absPath.replace(/^\\//, ''));
+        if (fs.existsSync(src)) {
+            console.log('COPY:' + src + ':' + absPath);
+            updated++;
+        } else { skipped++; }
+    } else {
+        console.error('CONFLICT:' + absPath);
+        conflicts++;
+    }
 }
 
-updated = 0
-skipped = 0
-conflicts = 0
-
-for rel_path, new_checksum in new_files.items():
-    # Normalize path: manifest uses relative paths like ./plugins/foo/index.js
-    # On disk they live under /opt/jarvit/ or /usr/local/lib/node_modules/jarvit/
-    # The manifest includes a 'base' field to indicate the install prefix
-    abs_path = rel_path  # manifest stores absolute paths
-
-    if abs_path in protected:
-        skipped += 1
-        continue
-
-    old_checksum = old_files.get(rel_path)
-    current_checksum = file_sha256(abs_path)
-
-    if current_checksum == new_checksum:
-        # Already at target version
-        continue
-
-    if old_checksum is None or current_checksum == old_checksum:
-        # User didn't modify — safe to replace
-        src = os.path.join(update_dir, 'files', rel_path.lstrip('/'))
-        if os.path.exists(src):
-            os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-            # Print the file to copy (shell will do the actual copy for permissions)
-            print(f'COPY:{src}:{abs_path}')
-            updated += 1
-        else:
-            skipped += 1
-    else:
-        # User modified this file — skip in simple mode
-        print(f'CONFLICT:{abs_path}', file=sys.stderr)
-        conflicts += 1
-
-print(f'SUMMARY:{updated}:{skipped}:{conflicts}', file=sys.stderr)
+console.error('SUMMARY:' + updated + ':' + skipped + ':' + conflicts);
 " 2>/tmp/vm-simple-update-errors) || {
     log "Manifest processing failed"
-    cat /tmp/vm-simple-update-errors
+    cat /tmp/vm-simple-update-errors 2>/dev/null
     exit 1
 }
 
-# Process COPY commands from python output
+# Process COPY commands from node output
 echo "$UPDATES" | while IFS= read -r line; do
     case "$line" in
         COPY:*)
@@ -139,8 +119,8 @@ if [ -f /tmp/vm-simple-update-errors ]; then
                 log "Done: $updated updated, $skipped skipped, $conflicts conflicts"
                 ;;
             CONFLICT:*)
-                path=$(echo "$line" | cut -d: -f2)
-                log "CONFLICT (user-modified, skipped): $path"
+                cpath=$(echo "$line" | cut -d: -f2)
+                log "CONFLICT (user-modified, skipped): $cpath"
                 ;;
         esac
     done < /tmp/vm-simple-update-errors
