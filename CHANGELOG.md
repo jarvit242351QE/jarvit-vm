@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.6 (2026-03-22)
+
+### Changed
+- E2E verified: auto-update successfully updates from v1.2.5 to v1.2.6
+
 ## v1.2.5 (2026-03-22)
 
 ### Fixed
