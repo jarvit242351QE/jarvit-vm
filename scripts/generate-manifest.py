@@ -36,8 +36,6 @@ def main():
     path_mappings = [
         ("scripts/vm-auto-update.sh", "/opt/jarvit/scripts/vm-auto-update.sh"),
         ("scripts/vm-simple-update.sh", "/opt/jarvit/scripts/vm-simple-update.sh"),
-        # systemd timer/service are included for reference but the VM uses
-        # a background loop in entrypoint.sh (no systemd in Firecracker VMs)
     ]
 
     # Skip patterns: build/dev artifacts that don't need checksum tracking

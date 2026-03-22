@@ -1,13 +1,33 @@
 # Changelog
 
-## v0.1.0 (2026-03-22)
+## v1.0.2 (2026-03-22)
 
-Initial release of the JARVIT VM auto-update system.
+### Fixed
+- vm-updater correctly preserves user-modified files during updates
+- Bumped vm-updater plugin version to 1.0.2
+
+## v1.0.1 (2026-03-22)
+
+### Fixed
+- Bumped vm-updater plugin version to 1.0.1 for E2E update test
+
+## v1.0.0 (2026-03-22)
+
+### Changed
+- Replaced python3 with node for JSON parsing in update scripts (python3 not available in minimal Debian rootfs)
+- Fixed vm-updater plugin to use correct OpenClaw plugin API (`registerHttpRoute`)
+- Used `browser_download_url` for asset downloads to avoid API rate limits
+- Removed GitHub token requirement for auto-update (repo is now public)
 
 ### Added
-- `vm-auto-update.sh` — polls GitHub releases every 30 minutes
-- `vm-simple-update.sh` — fallback updater when OpenClaw endpoint is unreachable
-- `vm-updater` plugin — OpenClaw plugin that handles intelligent 3-way merge updates
+- `vm-auto-update.sh` -- polls GitHub releases every 30 minutes
+- `vm-simple-update.sh` -- fallback updater when OpenClaw endpoint is unreachable
+- `vm-updater` plugin -- OpenClaw plugin that handles intelligent 3-way merge updates
 - `manifest.json` generation for tracking file checksums
-- systemd timer/service for automatic polling
 - GitHub Actions workflow for building releases
+- VM internet access via relay: DNS + nftables + TC configuration in init.sh
+
+## v0.0.1-test (2026-03-21)
+
+### Added
+- Initial test release for auto-update system verification

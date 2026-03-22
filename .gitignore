@@ -5,10 +5,9 @@ release-pkg/
 /jarvit-vm.tar.gz
 
 # TypeScript build artifacts (source maps and declarations)
-*.d.ts.map
-*.js.map
+plugins/*/dist/*.d.ts
+plugins/*/dist/*.d.ts.map
+plugins/*/dist/*.js.map
 
 # Keep compiled JS in dist/ (needed for plugin distribution)
-# Only ignore d.ts files
-*.d.ts
-!plugins/*/dist/*.js
+# dist/*.js is explicitly tracked for vm-updater

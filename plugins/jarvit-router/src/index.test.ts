@@ -43,13 +43,13 @@ const testCases = [
   { message: 'Create a REST API endpoint for products', expectedModel: 'minimax', expectedRoute: 'api_work' },
   { message: 'Integrate with the Stripe webhook', expectedModel: 'minimax', expectedRoute: 'api_work' },
 
-  // OPUS - Complex debugging (should require explicit signals)
-  { message: "I've been stuck on this bug for hours, can't figure it out", expectedModel: 'opus', expectedRoute: 'complex_debugging' },
-  { message: 'There is a mysterious memory leak in production', expectedModel: 'opus', expectedRoute: 'complex_debugging' },
+  // CLAUDE - Complex debugging (should require explicit signals)
+  { message: "I've been stuck on this bug for hours, can't figure it out", expectedModel: 'claude', expectedRoute: 'complex_debugging' },
+  { message: 'There is a mysterious memory leak in production', expectedModel: 'claude', expectedRoute: 'complex_debugging' },
 
-  // OPUS - Architecture
-  { message: 'Design the architecture for a scalable chat application', expectedModel: 'opus', expectedRoute: 'architecture' },
-  { message: 'Help me with system design for high availability', expectedModel: 'opus', expectedRoute: 'architecture' },
+  // CLAUDE - Architecture
+  { message: 'Design the architecture for a scalable chat application', expectedModel: 'claude', expectedRoute: 'architecture' },
+  { message: 'Help me with system design for high availability', expectedModel: 'claude', expectedRoute: 'architecture' },
 ];
 
 // Run tests
