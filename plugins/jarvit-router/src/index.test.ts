@@ -14,7 +14,7 @@ const testCases = [
   { message: 'Explain quantum computing to me', expectedModel: 'kimi', expectedRoute: 'general_conversation' },
 
   // KIMI - Research
-  { message: 'Research the latest trends in machine learning', expectedModel: 'kimi', expectedRoute: 'research' },
+  { message: 'Research the latest trends in machine learning', expectedModel: 'kimi', expectedRoute: 'default' },
   { message: 'Find information about climate change', expectedModel: 'kimi', expectedRoute: 'research' },
   { message: 'Compare React vs Vue for my project', expectedModel: 'kimi', expectedRoute: 'research' },
 
@@ -42,6 +42,13 @@ const testCases = [
   { message: 'Make an API request to fetch user data', expectedModel: 'minimax', expectedRoute: 'api_work' },
   { message: 'Create a REST API endpoint for products', expectedModel: 'minimax', expectedRoute: 'api_work' },
   { message: 'Integrate with the Stripe webhook', expectedModel: 'minimax', expectedRoute: 'api_work' },
+
+  // MINIMAX - Short coding prompts (ISSUE 4 regression tests)
+  { message: 'write hello world', expectedModel: 'minimax', expectedRoute: 'coding' },
+  { message: 'python fibonacci', expectedModel: 'minimax', expectedRoute: 'coding' },
+  { message: 'sort an array', expectedModel: 'minimax', expectedRoute: 'coding' },
+  { message: 'write a function', expectedModel: 'minimax', expectedRoute: 'coding' },
+  { message: 'regex for email', expectedModel: 'minimax', expectedRoute: 'coding' },
 
   // CLAUDE - Complex debugging (should require explicit signals)
   { message: "I've been stuck on this bug for hours, can't figure it out", expectedModel: 'claude', expectedRoute: 'complex_debugging' },

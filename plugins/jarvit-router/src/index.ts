@@ -108,9 +108,14 @@ const ROUTES: Route[] = [
       'write code', 'create function', 'implement', 'code this',
       'write a script', 'program', 'algorithm for', 'write python',
       'write javascript', 'write typescript', 'create a class',
-      'make a function', 'code for', 'build a'
+      'make a function', 'code for', 'build a',
+      'write hello world', 'hello world', 'fizzbuzz', 'fibonacci',
+      'sort algorithm', 'binary search', 'linked list', 'todo app',
+      'write a program', 'make a script', 'coding', 'code',
+      'function that', 'class that', 'method that', 'loop',
+      'regex for', 'parse', 'compile', 'runtime', 'syntax'
     ],
-    threshold: 0.80
+    threshold: 0.65
   },
   {
     name: 'ui_frontend',
@@ -254,6 +259,50 @@ function computeSimilarity(message: string, utterances: string[]): number {
 }
 
 // =============================================================================
+// Coding Keyword Detection
+// =============================================================================
+
+/** Programming languages, frameworks, and coding-related keywords.
+ *  If ANY of these appear in the message, boost MiniMax coding route. */
+const CODING_KEYWORDS = new Set([
+  // Languages
+  'python', 'javascript', 'typescript', 'java', 'rust', 'golang', 'ruby',
+  'php', 'swift', 'kotlin', 'scala', 'haskell', 'elixir', 'clojure',
+  'cpp', 'c++', 'csharp', 'c#', 'lua', 'perl', 'bash', 'sql', 'html', 'css',
+  // Frameworks / tools
+  'react', 'vue', 'angular', 'nextjs', 'express', 'fastify', 'django',
+  'flask', 'rails', 'spring', 'node', 'deno', 'bun', 'webpack', 'vite',
+  'docker', 'kubernetes', 'terraform', 'ansible', 'git', 'npm', 'pip',
+  // Concepts
+  'function', 'class', 'variable', 'array', 'object', 'string', 'integer',
+  'boolean', 'loop', 'recursion', 'async', 'await', 'promise', 'callback',
+  'api', 'endpoint', 'database', 'query', 'schema', 'migration', 'test',
+  'regex', 'parse', 'compile', 'debug', 'error', 'bug', 'fix', 'refactor',
+  'fibonacci', 'fizzbuzz', 'sorting', 'algorithm', 'leetcode',
+  'todo', 'crud', 'rest', 'graphql', 'websocket', 'server', 'client',
+  // Code-adjacent verbs
+  'implement', 'deploy', 'install', 'configure', 'build', 'compile', 'run',
+]);
+
+/** Classic coding phrases that should always route to MiniMax,
+ *  even if individual words might match other routes. */
+const CODING_PHRASES = [
+  'hello world', 'fizzbuzz', 'todo app', 'crud app',
+  'binary search', 'linked list', 'bubble sort', 'merge sort',
+  'quick sort', 'depth first', 'breadth first',
+];
+
+/** Check if message contains coding-related keywords or phrases. */
+function hasCodingKeywords(message: string): boolean {
+  const lower = message.toLowerCase();
+  // Check exact coding phrases first (e.g., "hello world")
+  if (CODING_PHRASES.some(p => lower.includes(p))) return true;
+  // Check individual coding keywords
+  const tokens = tokenize(message);
+  return tokens.some(t => CODING_KEYWORDS.has(t));
+}
+
+// =============================================================================
 // Routing Logic
 // =============================================================================
 
@@ -278,9 +327,25 @@ function routeMessage(message: string, userId: string): RoutingResult {
 
   // Score all routes
   const scores: { route: Route; score: number }[] = [];
+  const codingDetected = hasCodingKeywords(message);
 
   for (const route of ROUTES) {
-    const score = computeSimilarity(message, route.utterances);
+    let score = computeSimilarity(message, route.utterances);
+
+    // Boost MiniMax routes when coding keywords are detected.
+    // This ensures short prompts like "write hello world" or "python fibonacci"
+    // get routed to MiniMax even if they don't match utterance phrases exactly.
+    if (codingDetected && route.model === 'minimax') {
+      score = Math.min(score + 0.25, 1.0);
+    }
+    // Penalize kimi general_conversation when coding is detected.
+    // Prevents "write hello world" from routing to general_conversation
+    // just because "hello" matches a greeting utterance.
+    // Only penalize generic kimi routes, NOT claude (complex debugging) or research.
+    if (codingDetected && route.name === 'general_conversation') {
+      score = Math.max(score - 0.30, 0);
+    }
+
     if (score >= route.threshold) {
       scores.push({ route, score });
     }
@@ -295,6 +360,17 @@ function routeMessage(message: string, userId: string): RoutingResult {
       route: best.route.name,
       model: best.route.model,
       confidence: best.score,
+      escalated: false
+    };
+  }
+
+  // If coding keywords detected but no route matched above threshold,
+  // force route to MiniMax coding route.
+  if (codingDetected) {
+    return {
+      route: 'coding',
+      model: 'minimax',
+      confidence: 0.6,
       escalated: false
     };
   }
