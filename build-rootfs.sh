@@ -104,9 +104,36 @@ if [ "${EXTRACT_EXT4:-0}" = "1" ]; then
   CONTAINER=$(docker create jarvit-vm-rootfs)
   mkdir -p /tmp/rootfs
   docker export "$CONTAINER" | tar -C /tmp/rootfs -xf -
-  truncate -s 512M /opt/jarvit/images/rootfs.ext4
-  mkfs.ext4 -d /tmp/rootfs /opt/jarvit/images/rootfs.ext4
   docker rm "$CONTAINER"
+
+  # Size the ext4 image to fit the data + 25% headroom for runtime writes
+  # (config files, logs, memory tree, temp files). No more fixed 2GB images.
+  DATA_SIZE_KB=$(du -sk /tmp/rootfs | awk '{print $1}')
+  # Add 25% headroom + 32MB for ext4 metadata, round up to nearest 4MB
+  IMAGE_SIZE_KB=$(( (DATA_SIZE_KB * 125 / 100 + 32768 + 4095) / 4096 * 4096 ))
+  IMAGE_SIZE_MB=$(( IMAGE_SIZE_KB / 1024 ))
+  echo "  Data size: $(( DATA_SIZE_KB / 1024 ))MB, image size: ${IMAGE_SIZE_MB}MB (25% headroom)"
+
+  OUTPUT="${ROOTFS_OUTPUT:-/opt/jarvit/images/rootfs.ext4}"
+  truncate -s "${IMAGE_SIZE_MB}M" "$OUTPUT"
+  mkfs.ext4 -d /tmp/rootfs "$OUTPUT"
   rm -rf /tmp/rootfs
-  echo "ext4 image: /opt/jarvit/images/rootfs.ext4"
+
+  # Shrink to minimum + re-add headroom (mkfs.ext4 -d may over-allocate)
+  e2fsck -f -y "$OUTPUT" 2>/dev/null || true
+  resize2fs -M "$OUTPUT" 2>/dev/null || true
+  # Add headroom back (minimum size + 25% of data)
+  HEADROOM_MB=$(( DATA_SIZE_KB * 25 / 100 / 1024 ))
+  MIN_SIZE_BLOCKS=$(dumpe2fs -h "$OUTPUT" 2>/dev/null | grep "Block count" | awk '{print $3}')
+  BLOCK_SIZE=$(dumpe2fs -h "$OUTPUT" 2>/dev/null | grep "Block size" | awk '{print $3}')
+  if [[ -n "$MIN_SIZE_BLOCKS" && -n "$BLOCK_SIZE" ]]; then
+    MIN_SIZE_MB=$(( MIN_SIZE_BLOCKS * BLOCK_SIZE / 1024 / 1024 ))
+    FINAL_SIZE_MB=$(( MIN_SIZE_MB + HEADROOM_MB ))
+    resize2fs "$OUTPUT" "${FINAL_SIZE_MB}M" 2>/dev/null || true
+    truncate -s "${FINAL_SIZE_MB}M" "$OUTPUT"
+  fi
+
+  FINAL_SIZE=$(du -sh "$OUTPUT" | awk '{print $1}')
+  echo "  Final rootfs.ext4: $FINAL_SIZE ($OUTPUT)"
+  echo "ext4 image: $OUTPUT"
 fi

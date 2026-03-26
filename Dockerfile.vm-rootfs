@@ -9,12 +9,8 @@
 # Build:
 #   docker build -f Dockerfile.vm-rootfs -t jarvit-vm-rootfs .
 #
-# Extract rootfs as ext4 image:
-#   CONTAINER=$(docker create jarvit-vm-rootfs)
-#   docker export $CONTAINER | tar -C /tmp/rootfs -xf -
-#   truncate -s 512M rootfs.ext4
-#   mkfs.ext4 -d /tmp/rootfs rootfs.ext4
-#   docker rm $CONTAINER && rm -rf /tmp/rootfs
+# Extract rootfs as ext4 image (auto-sized to fit data + 25% headroom):
+#   EXTRACT_EXT4=1 ./build-rootfs.sh
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -35,7 +31,10 @@ WORKDIR /build/openclaw-core
 RUN OPENCLAW_A2UI_SKIP_MISSING=1 npm install --legacy-peer-deps && \
     OPENCLAW_A2UI_SKIP_MISSING=1 npm run build && \
     npm install -g . --legacy-peer-deps && \
-    npm ls -g node-llama-cpp 2>/dev/null && npm uninstall -g node-llama-cpp || true
+    npm ls -g node-llama-cpp 2>/dev/null && npm uninstall -g node-llama-cpp || true && \
+    # Prune dev dependencies from build output — they aren't needed at runtime.
+    # This removes TypeScript, linters, formatters, bundlers (~161MB).
+    cd /build/openclaw-core && npm prune --omit=dev --legacy-peer-deps
 
 # Build jarvit-router plugin (TypeScript → JS)
 COPY plugins/jarvit-router/ /build/jarvit-router/
@@ -80,6 +79,34 @@ RUN ln -sf ../lib/node_modules/jarvit/jarvit.mjs /usr/local/bin/jarvit
 RUN mkdir -p /usr/local/lib/node_modules/jarvit/dist/control-ui && \
     echo '<!DOCTYPE html><html><head><title>JARVIT VM</title></head><body><p>OK</p></body></html>' \
     > /usr/local/lib/node_modules/jarvit/dist/control-ui/index.html
+
+# ---------------------------------------------------------------------------
+# Slim down: remove packages not needed at runtime
+# ---------------------------------------------------------------------------
+# npm/corepack — not needed, the VM doesn't install packages at runtime
+RUN rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx \
+           /usr/local/bin/corepack \
+           /usr/local/include/node && \
+    # Remove any leftover dev tools that survived npm prune
+    rm -rf /usr/local/lib/node_modules/jarvit/node_modules/typescript \
+           /usr/local/lib/node_modules/jarvit/node_modules/@typescript \
+           /usr/local/lib/node_modules/jarvit/node_modules/@oxlint-tsgolint \
+           /usr/local/lib/node_modules/jarvit/node_modules/@oxlint \
+           /usr/local/lib/node_modules/jarvit/node_modules/oxfmt \
+           /usr/local/lib/node_modules/jarvit/node_modules/@rolldown \
+           /usr/local/lib/node_modules/jarvit/node_modules/@babel \
+           /usr/local/lib/node_modules/jarvit/node_modules/@esbuild \
+           /usr/local/lib/node_modules/jarvit/node_modules/unrun && \
+    # Remove docs, changelogs, READMEs, test files from node_modules
+    find /usr/local/lib/node_modules/jarvit/node_modules \
+         \( -name "README*" -o -name "CHANGELOG*" -o -name "LICENSE*" \
+            -o -name "*.md" -o -name "*.ts" -not -name "*.d.ts" \
+            -o -name "test" -o -name "tests" -o -name "__tests__" \
+            -o -name "example" -o -name "examples" \
+            -o -name ".github" -o -name ".eslintrc*" \) \
+         -exec rm -rf {} + 2>/dev/null || true
 
 # Copy jarvit-router plugin (compiled)
 COPY --from=builder /build/jarvit-router/jarvit.plugin.json /opt/jarvit/plugins/jarvit-router/jarvit.plugin.json
