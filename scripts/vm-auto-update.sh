@@ -6,10 +6,10 @@
 # When a new version is found, downloads the tarball and calls the
 # vm-updater plugin's /system/update endpoint to handle the merge.
 #
-# UPDATE SOURCE: Hetzner Object Storage (public HTTPS bucket).
-# Pipeline: git push → CI → GitHub Release → ops-backup-1 →
-# release-to-sb.sh uploads jarvit-vm.tar.gz + latest.json to bucket.
-# VMs just curl the public URL. No tokens, no auth, no rate limits.
+# UPDATE SOURCE: Host bridge HTTP server (172.16.0.1:18792).
+# Pipeline: git push → CI → GitHub Release → SB → auto-update.sh →
+# host stages jarvit-vm.tar.gz + latest.json → VMs curl from bridge.
+# No tokens, no auth, no rate limits (bridge-only access).
 #
 # DISK BUDGET: VMs have ~10GB total. This script must leave zero waste.
 # Every temp file is deleted the moment it's no longer needed:
@@ -35,17 +35,17 @@
 
 set -e
 
-# VM updates come from Hetzner Object Storage (public HTTPS bucket).
-# The full pipeline: git push → CI → GitHub Release → ops-backup-1 →
-# release-to-sb.sh uploads jarvit-vm.tar.gz + latest.json to the bucket.
-# VMs just curl a public URL. No tokens, no auth, no rate limits.
-# The bucket URL is read from config (baked into rootfs at build time).
+# VM updates are served from the host bridge (172.16.0.1:18792).
+# The host's auto-update.sh stages jarvit-vm.tar.gz + latest.json there.
+# Pipeline: git push → CI → GitHub Release → SB → auto-update.sh → host staging
+# VMs curl the host bridge URL. No auth needed (bridge-only access).
+# The URL can be overridden via config file (baked into rootfs at build time).
 UPDATE_BASE_URL=""
 if [ -f /opt/jarvit/config/update-url ]; then
     UPDATE_BASE_URL=$(cat /opt/jarvit/config/update-url 2>/dev/null | tr -d '[:space:]')
 fi
 if [ -z "$UPDATE_BASE_URL" ]; then
-    UPDATE_BASE_URL="https://jarvit-releases.fsn1.your-objectstorage.com"
+    UPDATE_BASE_URL="http://172.16.0.1:18792"
 fi
 VERSION_FILE="/opt/jarvit/vm-version"
 UPDATES_DIR="/data/updates"
