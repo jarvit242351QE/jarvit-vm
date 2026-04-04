@@ -158,12 +158,20 @@ function ensureDir(filePath) {
     fs.mkdirSync(dir, { recursive: true });
 }
 function resolveUpdateSrc(updateDir, targetPath) {
-    const srcPath = path.join(updateDir, "files", targetPath);
-    if (fs.existsSync(srcPath))
-        return srcPath;
-    const altSrc = path.join(updateDir, "files", targetPath.replace(/^\//, ""));
-    if (fs.existsSync(altSrc))
-        return altSrc;
+    // Try files/ prefix first (legacy tarball structure)
+    const withFiles = path.join(updateDir, "files", targetPath);
+    if (fs.existsSync(withFiles))
+        return withFiles;
+    const withFilesStripped = path.join(updateDir, "files", targetPath.replace(/^\//, ""));
+    if (fs.existsSync(withFilesStripped))
+        return withFilesStripped;
+    // Try direct path (current CI tarball structure: opt/jarvit/... at root)
+    const direct = path.join(updateDir, targetPath);
+    if (fs.existsSync(direct))
+        return direct;
+    const directStripped = path.join(updateDir, targetPath.replace(/^\//, ""));
+    if (fs.existsSync(directStripped))
+        return directStripped;
     return null;
 }
 function copyFromUpdate(updateDir, targetPath) {

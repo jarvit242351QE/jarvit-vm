@@ -216,6 +216,15 @@ const protectedPaths = new Set([
 
 let updated = 0, skipped = 0, conflicts = 0, securityApplied = 0, deleted = 0;
 
+// Resolve source file (supports both files/ prefix and direct tarball path)
+function findSrc(absP) {
+    const withF = path.join(updateDir, 'files', absP.replace(/^\\//, ''));
+    if (fs.existsSync(withF)) return withF;
+    const direct = path.join(updateDir, absP.replace(/^\\//, ''));
+    if (fs.existsSync(direct)) return direct;
+    return null;
+}
+
 for (const [absPath, rawEntry] of Object.entries(newFiles)) {
     const info = normalize(rawEntry, absPath);
 
@@ -231,8 +240,8 @@ for (const [absPath, rawEntry] of Object.entries(newFiles)) {
 
     // System files: always replace
     if (info.type === 'system') {
-        const src = path.join(updateDir, 'files', absPath.replace(/^\\//, ''));
-        if (fs.existsSync(src)) {
+        const src = findSrc(absPath);
+        if (src) {
             console.log('COPY:' + src + ':' + absPath);
             updated++;
         } else { skipped++; }
@@ -241,8 +250,8 @@ for (const [absPath, rawEntry] of Object.entries(newFiles)) {
 
     // User didn't modify OR file is new: safe to replace
     if (oldChecksum === undefined || currentChecksum === null || currentChecksum === oldChecksum) {
-        const src = path.join(updateDir, 'files', absPath.replace(/^\\//, ''));
-        if (fs.existsSync(src)) {
+        const src = findSrc(absPath);
+        if (src) {
             console.log('COPY:' + src + ':' + absPath);
             updated++;
         } else { skipped++; }
@@ -250,8 +259,8 @@ for (const [absPath, rawEntry] of Object.entries(newFiles)) {
     }
 
     // User modified the file — smart merge (no backup files)
-    const conflictSrc = path.join(updateDir, 'files', absPath.replace(/^\\//, ''));
-    if (!fs.existsSync(conflictSrc)) { skipped++; continue; }
+    const conflictSrc = findSrc(absPath);
+    if (!conflictSrc) { skipped++; continue; }
     const updateContent = fs.readFileSync(conflictSrc, 'utf8');
     const userContent = fs.readFileSync(absPath, 'utf8');
     const basePath = baseDir + '/' + absPath.replace(/^\\//, '');
@@ -335,8 +344,8 @@ for (const [absPath, rawEntry] of Object.entries(oldFiles)) {
 
 // Save base versions for future 3-way merges
 for (const [absPath, rawEntry] of Object.entries(newFiles)) {
-    const src = path.join(updateDir, 'files', absPath.replace(/^\\//, ''));
-    if (fs.existsSync(src)) {
+    const src = findSrc(absPath);
+    if (src) {
         console.log('SAVE_BASE:' + src + ':' + baseDir + '/' + absPath.replace(/^\\//, ''));
     }
 }
