@@ -287,10 +287,15 @@ fi
 #        VM downloads SHA256SUMS + sig → verifies with cosign.pub
 # ---------------------------------------------------------------------------
 COSIGN_PUB="/opt/jarvit/config/cosign.pub"
+COSIGN_PUB_BAKED=0
 
-# Download cosign.pub if not present (first boot before rootfs update)
-if [ ! -f "$COSIGN_PUB" ]; then
-    log "Downloading cosign.pub from Object Storage..."
+# cosign.pub should be baked into rootfs at build time. If missing, download
+# from Object Storage as a fallback — but log a degraded-trust warning since
+# an attacker who compromises the bucket could replace this key.
+if [ -f "$COSIGN_PUB" ]; then
+    COSIGN_PUB_BAKED=1
+else
+    log "WARNING: cosign.pub not baked into rootfs — downloading from Object Storage (DEGRADED TRUST)"
     mkdir -p "$(dirname "$COSIGN_PUB")"
     curl -sf --connect-timeout 10 --max-time 15 \
         -o "$COSIGN_PUB" \
@@ -308,7 +313,18 @@ curl -sf --connect-timeout 10 --max-time 15 \
     -o "$SUMS_SIG" \
     "${UPDATE_BASE_URL}/SHA256SUMS.sig" 2>/dev/null || SUMS_SIG=""
 
-if [ -f "$COSIGN_PUB" ] && [ -f "$SUMS_FILE" ] && [ -s "$SUMS_FILE" ] && [ -f "$SUMS_SIG" ] && [ -s "$SUMS_SIG" ]; then
+if [ -f "$COSIGN_PUB" ]; then
+    # cosign.pub exists — signature verification is MANDATORY.
+    # An attacker who strips SHA256SUMS.sig from the bucket must NOT be able
+    # to bypass verification. If the key is installed, we REQUIRE signatures.
+    if [ ! -f "$SUMS_FILE" ] || [ ! -s "$SUMS_FILE" ] || [ ! -f "$SUMS_SIG" ] || [ ! -s "$SUMS_SIG" ]; then
+        log "CRITICAL: Signature files missing but cosign.pub exists — possible tampering (strip-to-bypass attack)!"
+        log "Aborting update. Will retry next cycle."
+        rm -f "$TARBALL" "$SUMS_FILE" "$SUMS_SIG" 2>/dev/null
+        log_disk_usage
+        exit 2
+    fi
+
     # Verify signature (ECDSA P-256 / SHA-256, cosign-compatible)
     if node "$SCRIPTS_DIR/verify-cosign.js" "$COSIGN_PUB" "$SUMS_SIG" "$SUMS_FILE" 2>/dev/null; then
         log "Signature verified: SHA256SUMS is authentic (signed by CI)"
@@ -336,10 +352,9 @@ if [ -f "$COSIGN_PUB" ] && [ -f "$SUMS_FILE" ] && [ -s "$SUMS_FILE" ] && [ -f "$
         exit 2
     fi
 else
-    # Signature files not available yet — acceptable during initial rollout
-    # or if Object Storage hasn't been populated with signatures yet.
-    # The basic SHA256 from latest.json still catches corruption.
-    log "Signature files not available — using basic SHA256 only"
+    # No cosign.pub at all (not baked in AND download failed).
+    # Accept basic SHA256 from latest.json only — first-boot tolerance.
+    log "No cosign.pub available — using basic SHA256 only (first-boot tolerance)"
 fi
 
 # Clean up verification files
