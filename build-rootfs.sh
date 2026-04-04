@@ -71,6 +71,10 @@ mkdir -p "$BUILD_DIR/vm-update/vm-updater-plugin"
 
 cp "$SCRIPT_DIR/scripts/vm-auto-update.sh" "$BUILD_DIR/vm-update/"
 cp "$SCRIPT_DIR/scripts/vm-simple-update.sh" "$BUILD_DIR/vm-update/"
+# JS helpers used by vm-auto-update.sh (JSON parsing, version comparison, signature verification)
+for js in "$SCRIPT_DIR"/scripts/*.js; do
+  [ -f "$js" ] && cp "$js" "$BUILD_DIR/vm-update/"
+done
 cp -r "$SCRIPT_DIR/plugins/vm-updater/dist" "$BUILD_DIR/vm-update/vm-updater-plugin/dist"
 cp "$SCRIPT_DIR/plugins/vm-updater/jarvit.plugin.json" "$BUILD_DIR/vm-update/vm-updater-plugin/"
 cp "$SCRIPT_DIR/plugins/vm-updater/package.json" "$BUILD_DIR/vm-update/vm-updater-plugin/"

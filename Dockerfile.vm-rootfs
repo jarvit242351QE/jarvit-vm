@@ -51,7 +51,7 @@ RUN sed -i 's|"./index.js"|"./dist/index.js"|g' openclaw.plugin.json && \
 FROM node:22-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    iproute2 curl ca-certificates gosu && \
+    iproute2 curl ca-certificates gosu tini && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy OpenClaw (globally installed binary + node_modules)
@@ -164,16 +164,21 @@ RUN mkdir -p /opt/jarvit/config /opt/jarvit/scripts /opt/jarvit/secrets /data/up
 COPY entrypoint.sh /opt/jarvit/entrypoint.sh
 RUN chmod 755 /opt/jarvit/entrypoint.sh
 COPY config/jarvit.json /opt/jarvit/config/jarvit.json
+COPY config/cosign.pub /opt/jarvit/config/cosign.pub
 COPY memory-tree-seed.tar.gz /opt/jarvit/memory-tree-seed.tar.gz
+
+# Object Storage URL for auto-updates (public HTTPS, no auth needed)
+ARG UPDATE_URL=https://jarvit-releases.fsn1.your-objectstorage.com
+RUN echo "$UPDATE_URL" > /opt/jarvit/config/update-url
 
 # ---------------------------------------------------------------------------
 # VM Auto-Update System
 # ---------------------------------------------------------------------------
-# Scripts that poll GitHub releases and apply updates.
-# The github-token is injected at VM creation time by Host Agent (via MMDS overlay).
+# Scripts that poll Object Storage for new versions.
 # The vm-version file tracks the current installed version.
 COPY vm-update/vm-auto-update.sh /opt/jarvit/scripts/vm-auto-update.sh
 COPY vm-update/vm-simple-update.sh /opt/jarvit/scripts/vm-simple-update.sh
+COPY vm-update/*.js /opt/jarvit/scripts/
 RUN chmod 755 /opt/jarvit/scripts/vm-auto-update.sh /opt/jarvit/scripts/vm-simple-update.sh
 
 # vm-updater plugin (OpenClaw plugin for intelligent merge)

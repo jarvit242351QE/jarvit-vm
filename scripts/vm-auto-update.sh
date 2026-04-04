@@ -2,28 +2,30 @@
 # =============================================================================
 # JARVIT VM Auto-Update
 # =============================================================================
-# Polls GitHub releases for new versions of the VM software stack.
-# When a new version is found, downloads the release tarball and calls
-# the vm-updater plugin's /system/update endpoint to handle the merge.
+# Polls the host-agent for new versions of the VM software stack.
+# When a new version is found, downloads the tarball and calls the
+# vm-updater plugin's /system/update endpoint to handle the merge.
+#
+# UPDATE SOURCE: Hetzner Object Storage (public HTTPS bucket).
+# Pipeline: git push → CI → GitHub Release → ops-backup-1 →
+# release-to-sb.sh uploads jarvit-vm.tar.gz + latest.json to bucket.
+# VMs just curl the public URL. No tokens, no auth, no rate limits.
 #
 # DISK BUDGET: VMs have ~10GB total. This script must leave zero waste.
 # Every temp file is deleted the moment it's no longer needed:
 #   tarball    -> deleted immediately after extraction
 #   extract    -> deleted immediately after apply
 #   old audits -> only latest version kept
-#   .update-*  -> conflict sidecar files deleted after 7 days
 #
 # SAFETY:
 #   - All temp files live under /data/updates/ (hardcoded, never constructed)
-#   - Cleanup only touches /data/updates/ contents and .update-* sidecar files
 #   - No dynamic path construction for rm -rf targets
 #   - $LATEST is validated to contain only [a-zA-Z0-9._-] before use in paths
 #
-# Called every 30 minutes by the background loop in entrypoint.sh.
+# Called every 5 minutes by the background loop in entrypoint.sh.
 # Also callable manually: /opt/jarvit/scripts/vm-auto-update.sh
 #
 # Dependencies: curl, node (both available in the VM rootfs)
-# Note: python3 is NOT available in the minimal Debian rootfs.
 #
 # Exit codes:
 #   0 -- no update needed, or update applied successfully
@@ -33,14 +35,23 @@
 
 set -e
 
-REPO="jarvit242351QE/jarvit-vm"
+# VM updates come from Hetzner Object Storage (public HTTPS bucket).
+# The full pipeline: git push → CI → GitHub Release → ops-backup-1 →
+# release-to-sb.sh uploads jarvit-vm.tar.gz + latest.json to the bucket.
+# VMs just curl a public URL. No tokens, no auth, no rate limits.
+# The bucket URL is read from config (baked into rootfs at build time).
+UPDATE_BASE_URL=""
+if [ -f /opt/jarvit/config/update-url ]; then
+    UPDATE_BASE_URL=$(cat /opt/jarvit/config/update-url 2>/dev/null | tr -d '[:space:]')
+fi
+if [ -z "$UPDATE_BASE_URL" ]; then
+    UPDATE_BASE_URL="https://jarvit-releases.fsn1.your-objectstorage.com"
+fi
 VERSION_FILE="/opt/jarvit/vm-version"
 UPDATES_DIR="/data/updates"
 TMP_DIR="/data/updates/tmp"
 AUDIT_DIR="/data/updates/audit"
-GITHUB_TOKEN_FILE="/opt/jarvit/secrets/github-token"
 UPDATER_URL="http://127.0.0.1:18790"
-AUTH_HEADER=""
 LOG_TAG="[vm-update]"
 LOCK_FILE="/tmp/vm-update.lock"
 
@@ -85,8 +96,8 @@ log_disk_usage() {
 # SAFETY: Only touches these hardcoded locations:
 #   /data/updates/tmp/        -- always safe to wipe entirely
 #   /data/updates/audit/<old> -- old audit dirs (not current version)
-#   /opt/jarvit/**/.update-*  -- conflict sidecar files older than 7 days
-#   /opt/jarvit/**/.user-backup-* -- backup files older than 7 days
+#   /opt/jarvit/**/.update-*  -- legacy sidecar files (no longer created)
+#   /opt/jarvit/**/.user-backup-* -- legacy backup files (no longer created)
 # ---------------------------------------------------------------------------
 cleanup_after_update() {
     CURRENT_VER=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
@@ -109,14 +120,10 @@ cleanup_after_update() {
         done
     fi
 
-    # 3. Delete stale .update-VERSION conflict sidecar files (older than 7 days)
-    #    These are created by the vm-updater plugin when user modified a file
-    #    and the update also changed it. After 7 days, the user has had time to
-    #    review them.
-    find /opt/jarvit -maxdepth 4 -name "*.update-*" -type f -mtime +7 -delete 2>/dev/null || true
-
-    # 4. Delete stale .user-backup-VERSION files (older than 7 days)
-    find /opt/jarvit -maxdepth 4 -name "*.user-backup-*" -type f -mtime +7 -delete 2>/dev/null || true
+    # 3. Delete any leftover sidecar files from previous update system versions
+    #    Current merge system doesn't create these, but older versions did.
+    find /opt/jarvit -maxdepth 4 -name "*.update-*" -type f -delete 2>/dev/null || true
+    find /opt/jarvit -maxdepth 4 -name "*.user-backup-*" -type f -delete 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -142,31 +149,29 @@ mkdir -p "$UPDATES_DIR" "$TMP_DIR" "$AUDIT_DIR"
 # Read current state
 # ---------------------------------------------------------------------------
 CURRENT=$(cat "$VERSION_FILE" 2>/dev/null || echo "none")
-TOKEN=$(cat "$GITHUB_TOKEN_FILE" 2>/dev/null || true)
-
-if [ -n "$TOKEN" ]; then
-    AUTH_HEADER="Authorization: token $TOKEN"
-    log "Using GitHub token for higher rate limits"
-fi
 
 log "Current version: $CURRENT"
 
 # ---------------------------------------------------------------------------
-# Check latest release from GitHub API
+# Check latest release from Object Storage (public HTTPS)
+#
+# latest.json contains version + SHA256 + download URL for jarvit-vm.tar.gz.
+# Uploaded by release-to-sb.sh on ops-backup-1 after each CI release.
 # ---------------------------------------------------------------------------
-RELEASE_JSON=$(curl -sf --connect-timeout 10 --max-time 30 \
-    ${AUTH_HEADER:+-H "$AUTH_HEADER"} \
-    -H "Accept: application/vnd.github.v3+json" \
-    "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null) || {
-    log "Could not reach GitHub API (network issue or no releases yet). Skipping."
+RELEASE_JSON=$(curl -sf --connect-timeout 10 --max-time 15 \
+    "${UPDATE_BASE_URL}/latest.json" 2>/dev/null) || RELEASE_JSON=""
+
+if [ -z "$RELEASE_JSON" ]; then
+    log "Object Storage unavailable or no release yet. Will retry next cycle."
     log_disk_usage
     exit 0
-}
+fi
 
 LATEST=$(printf '%s\n' "$RELEASE_JSON" | json_get "tag_name")
+EXPECTED_SHA256=$(printf '%s\n' "$RELEASE_JSON" | json_get "sha256") || EXPECTED_SHA256=""
 
 if [ -z "$LATEST" ]; then
-    log "Could not parse latest version from GitHub. Skipping."
+    log "Could not parse latest version. Skipping."
     log_disk_usage
     exit 0
 fi
@@ -229,16 +234,15 @@ log "New version available: $CURRENT -> $LATEST"
 DOWNLOAD_URL=$(printf '%s\n' "$RELEASE_JSON" | json_asset_url "jarvit-vm.tar.gz")
 
 if [ -z "$DOWNLOAD_URL" ]; then
-    log "No jarvit-vm.tar.gz asset in release $LATEST. Skipping."
+    log "Host response missing download URL. Will retry next cycle."
     log_disk_usage
     exit 0
 fi
 
 TARBALL="$TMP_DIR/jarvit-vm.tar.gz"
 
-log "Downloading $LATEST from $DOWNLOAD_URL ..."
+log "Downloading $LATEST from Object Storage ..."
 curl -sfL --connect-timeout 10 --max-time 120 \
-    ${AUTH_HEADER:+-H "$AUTH_HEADER"} \
     -o "$TARBALL" \
     "$DOWNLOAD_URL" || {
     log "Download failed. Will retry next cycle."
@@ -257,6 +261,89 @@ if [ "$IS_GZ" != "yes" ]; then
     log_disk_usage
     exit 2
 fi
+
+# Compute SHA256 of downloaded tarball (needed for both checks below)
+ACTUAL_SHA256=$(sha256sum "$TARBALL" 2>/dev/null | cut -d' ' -f1) || ACTUAL_SHA256=""
+if [ -z "$ACTUAL_SHA256" ]; then
+    ACTUAL_SHA256=$(node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('$TARBALL')).digest('hex'))" 2>/dev/null) || ACTUAL_SHA256=""
+fi
+
+# Quick integrity check: verify against latest.json SHA256
+if [ -n "$EXPECTED_SHA256" ] && [ -n "$ACTUAL_SHA256" ]; then
+    if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+        log "SHA256 mismatch! Expected: $EXPECTED_SHA256, Got: $ACTUAL_SHA256. Removing."
+        rm -f "$TARBALL"
+        log_disk_usage
+        exit 2
+    fi
+    log "SHA256 integrity check passed: $ACTUAL_SHA256"
+fi
+
+# ---------------------------------------------------------------------------
+# Signature verification: verify SHA256SUMS.sig with cosign public key.
+# This proves the checksums were signed by CI (private key in GitHub Secrets).
+# An attacker who compromises Object Storage cannot forge this signature.
+# Chain: CI signs SHA256SUMS → ops-backup-1 verifies → uploads to S3 →
+#        VM downloads SHA256SUMS + sig → verifies with cosign.pub
+# ---------------------------------------------------------------------------
+COSIGN_PUB="/opt/jarvit/config/cosign.pub"
+
+# Download cosign.pub if not present (first boot before rootfs update)
+if [ ! -f "$COSIGN_PUB" ]; then
+    log "Downloading cosign.pub from Object Storage..."
+    mkdir -p "$(dirname "$COSIGN_PUB")"
+    curl -sf --connect-timeout 10 --max-time 15 \
+        -o "$COSIGN_PUB" \
+        "${UPDATE_BASE_URL}/cosign.pub" 2>/dev/null || true
+fi
+
+# Download SHA256SUMS + signature from Object Storage
+SUMS_FILE="$TMP_DIR/SHA256SUMS"
+SUMS_SIG="$TMP_DIR/SHA256SUMS.sig"
+
+curl -sf --connect-timeout 10 --max-time 15 \
+    -o "$SUMS_FILE" \
+    "${UPDATE_BASE_URL}/SHA256SUMS" 2>/dev/null || SUMS_FILE=""
+curl -sf --connect-timeout 10 --max-time 15 \
+    -o "$SUMS_SIG" \
+    "${UPDATE_BASE_URL}/SHA256SUMS.sig" 2>/dev/null || SUMS_SIG=""
+
+if [ -f "$COSIGN_PUB" ] && [ -f "$SUMS_FILE" ] && [ -s "$SUMS_FILE" ] && [ -f "$SUMS_SIG" ] && [ -s "$SUMS_SIG" ]; then
+    # Verify signature (ECDSA P-256 / SHA-256, cosign-compatible)
+    if node "$SCRIPTS_DIR/verify-cosign.js" "$COSIGN_PUB" "$SUMS_SIG" "$SUMS_FILE" 2>/dev/null; then
+        log "Signature verified: SHA256SUMS is authentic (signed by CI)"
+
+        # Verify tarball hash against the signed SHA256SUMS
+        SUMS_HASH=$(grep "jarvit-vm.tar.gz" "$SUMS_FILE" | awk '{print $1}')
+        if [ -n "$SUMS_HASH" ] && [ -n "$ACTUAL_SHA256" ]; then
+            if [ "$ACTUAL_SHA256" != "$SUMS_HASH" ]; then
+                log "CRITICAL: Tarball hash doesn't match signed SHA256SUMS!"
+                log "  Tarball:  $ACTUAL_SHA256"
+                log "  Expected: $SUMS_HASH"
+                rm -f "$TARBALL" "$SUMS_FILE" "$SUMS_SIG"
+                log_disk_usage
+                exit 2
+            fi
+            log "Tarball hash matches signed SHA256SUMS"
+        elif [ -z "$SUMS_HASH" ]; then
+            log "WARNING: jarvit-vm.tar.gz not in SHA256SUMS — skipping hash cross-check"
+        fi
+    else
+        log "CRITICAL: Signature verification FAILED — SHA256SUMS may be tampered!"
+        log "Aborting update. Will retry next cycle."
+        rm -f "$TARBALL" "$SUMS_FILE" "$SUMS_SIG"
+        log_disk_usage
+        exit 2
+    fi
+else
+    # Signature files not available yet — acceptable during initial rollout
+    # or if Object Storage hasn't been populated with signatures yet.
+    # The basic SHA256 from latest.json still catches corruption.
+    log "Signature files not available — using basic SHA256 only"
+fi
+
+# Clean up verification files
+rm -f "$SUMS_FILE" "$SUMS_SIG" 2>/dev/null
 
 # ---------------------------------------------------------------------------
 # Extract the update package into /data/updates/tmp/extract/

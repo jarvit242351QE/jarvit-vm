@@ -105,6 +105,9 @@ interface PluginApi {
 const MANIFEST_PATH =
   process.env.VM_MANIFEST_PATH || "/opt/jarvit/vm-manifest.json";
 const VERSION_FILE = "/opt/jarvit/vm-version";
+const BASE_DIR = "/opt/jarvit/.update-base";
+const ROLLBACK_DIR = "/opt/jarvit/.rollback";
+const ROLLBACK_MARKER = "/data/.update-in-progress";
 const UPDATE_PORT = 18790;
 
 // AI Proxy URL for merge analysis
@@ -120,6 +123,25 @@ const PROTECTED_PATHS = new Set([
   "/data/.jarvit/jarvit.json",
   "/opt/jarvit/secrets/github-token",
 ]);
+
+// SAFETY: The updater can ONLY write to paths under these prefixes.
+// Everything else (user data, conversations, memories, uploads) is untouchable.
+// This prevents a malicious or buggy manifest from corrupting user data.
+const ALLOWED_WRITE_PREFIXES = [
+  "/opt/jarvit/scripts/",
+  "/opt/jarvit/plugins/",
+  "/opt/jarvit/config/",
+  "/opt/jarvit/entrypoint",   // entrypoint.sh, init.sh
+  "/opt/jarvit/init",
+];
+
+function isAllowedWritePath(filePath: string): boolean {
+  // Normalize: block path traversal attempts (/../)
+  const normalized = path.resolve(filePath);
+  if (normalized !== filePath) return false;
+
+  return ALLOWED_WRITE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
 
 // File extensions that are mergeable text files (AI can analyze them)
 const MERGEABLE_EXTENSIONS = new Set([
@@ -187,6 +209,8 @@ function resolveUpdateSrc(updateDir: string, targetPath: string): string | null 
 }
 
 function copyFromUpdate(updateDir: string, targetPath: string): boolean {
+  // Defense-in-depth: even if caller forgot the check, never write outside allowed paths
+  if (!isAllowedWritePath(targetPath)) return false;
   const src = resolveUpdateSrc(updateDir, targetPath);
   if (!src) return false;
   ensureDir(targetPath);
@@ -256,8 +280,20 @@ the final file. The user's additions (custom routes, tools, business logic)
 must also be in the final file. Nothing lost from either side.\n`
       : "";
 
-  const prompt = `You are JARVIT's system update manager. A VM software update has a conflict on a file that the user customized.
+  // Load user's system context so JARVIT understands their setup
+  let userContext = "";
+  try {
+    const jarvitConfig = readFileSafe("/data/config/jarvit.json");
+    if (jarvitConfig) {
+      const cfg = JSON.parse(jarvitConfig);
+      const name = cfg?.user?.name || cfg?.name || "the user";
+      const plugins = cfg?.plugins ? Object.keys(cfg.plugins).join(", ") : "default";
+      userContext = `\nUSER CONTEXT: This is ${name}'s JARVIT VM. Installed plugins: ${plugins}. You are JARVIT — you live in this VM. You already know what ${name} has customized because you helped them build it. Use that understanding when merging.\n`;
+    }
+  } catch {}
 
+  const prompt = `You are JARVIT, the AI assistant running inside this user's VM. A system update has a conflict on a file the user customized. You know this system — you've been running in it.
+${userContext}
 FILE: ${filePath}
 UPDATE TYPE: ${fileType}${securityContext}
 
@@ -277,27 +313,25 @@ ${userContent.length > 4000 ? "\n... (truncated)" : ""}
 ${updateContent.slice(0, 4000)}
 ${updateContent.length > 4000 ? "\n... (truncated)" : ""}
 
-ANALYZE:
-1. What did the user change from the original, and WHY? (custom tools, business logic, personal config, etc.)
-2. What does the update change, and WHY? (bug fixes, security patches, new features, etc.)
-3. Produce ONE merged file that contains EVERYTHING from both sides — like a git merge.
-   Example: Original has routes A,B,C. User added route D. Update fixes route B and adds route E.
-   Result: ONE file with routes A, B(fixed), C, D(user's), E(new). Nothing lost.
+You already know this user's system. Think about:
+1. What did the user customize and WHY? You helped them — recall the intent behind their changes.
+2. What does the update change? Bug fixes, security patches, new features?
+3. Produce ONE merged file that keeps EVERYTHING from both sides. Like a git merge — nothing lost.
 
 RULES:
-${fileType === "security" ? `- SECURITY: Produce ONE merged file containing both the security fix AND user customizations.
-- The security fix must be present in the output — never skip or weaken it.
-- The user's additions (custom routes, tools, configs) must also be present — never drop them.
-- Think of it like a git merge: both sides contribute to one result. Nothing lost.` : `- User customizations ALWAYS take priority over update defaults.
-- If user added custom tools/plugins/routes, keep them all.
-- If update fixes a bug in code the user didn't touch, apply the fix.
-- If update changes the same lines the user modified, keep the user's version for those lines.
-- If unsure, keep user's version (conservative).`}
+${fileType === "security" ? `- SECURITY: The security fix is non-negotiable. Produce ONE merged file with BOTH the fix AND user customizations.
+- Never skip or weaken the security fix. Never drop user additions.` : `- User customizations ALWAYS take priority over update defaults.
+- Keep all user-added tools/plugins/routes/config.
+- Apply bug fixes to code the user didn't touch.
+- If update changes the same lines the user modified, keep the user's version.
+- If unsure, keep user's version.`}
+
+IMPORTANT: Your merged output must be valid code/config. For .json files, output valid JSON. For .ts/.js files, output valid JavaScript/TypeScript. For .sh files, output valid bash.
 
 Respond with EXACTLY this JSON (no markdown, no explanation outside JSON):
 {
   "resolution": "merged" | "kept_user" | "kept_new",
-  "userChangeSummary": "brief description of what the user customized",
+  "userChangeSummary": "brief description of what the user customized and why",
   "updateChangeSummary": "brief description of what the update changes",
   "reason": "why this resolution was chosen",
   "mergedContent": "the full merged file content (only if resolution is 'merged')"
@@ -357,14 +391,42 @@ Respond with EXACTLY this JSON (no markdown, no explanation outside JSON):
 
     log(`AI merge for ${filePath} [${fileType}]: ${result.resolution} — ${result.reason}`);
 
+    // Validate merged output before accepting it
+    let mergedContent =
+      result.resolution === "merged"
+        ? result.mergedContent || userContent
+        : result.resolution === "kept_new"
+        ? updateContent
+        : userContent;
+
+    if (result.resolution === "merged" && result.mergedContent) {
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext === ".json") {
+        try { JSON.parse(result.mergedContent); } catch {
+          log(`AI merge produced invalid JSON for ${filePath} — keeping user version`);
+          return {
+            resolution: "kept_user" as const, mergedContent: userContent,
+            userChangeSummary: result.userChangeSummary || "Unknown",
+            updateChangeSummary: result.updateChangeSummary || "Unknown",
+            reason: "AI merge produced invalid JSON. Conservative fallback: keeping user version.",
+          };
+        }
+      }
+      // Basic syntax check: merged output shouldn't be empty or drastically shorter
+      if (result.mergedContent.trim().length < Math.min(userContent.length, updateContent.length) * 0.5) {
+        log(`AI merge output suspiciously short for ${filePath} — keeping user version`);
+        return {
+          resolution: "kept_user" as const, mergedContent: userContent,
+          userChangeSummary: result.userChangeSummary || "Unknown",
+          updateChangeSummary: result.updateChangeSummary || "Unknown",
+          reason: "AI merge output was truncated/too short. Conservative fallback: keeping user version.",
+        };
+      }
+    }
+
     return {
       resolution: result.resolution || "kept_user",
-      mergedContent:
-        result.resolution === "merged"
-          ? result.mergedContent || userContent
-          : result.resolution === "kept_new"
-          ? updateContent
-          : userContent,
+      mergedContent,
       userChangeSummary: result.userChangeSummary || "Unknown user changes",
       updateChangeSummary: result.updateChangeSummary || "Unknown update changes",
       reason: result.reason || "AI analysis complete",
@@ -391,6 +453,132 @@ Respond with EXACTLY this JSON (no markdown, no explanation outside JSON):
       updateChangeSummary: "Could not analyze (AI unavailable)",
       reason: `AI merge failed: ${err.message}. Conservative fallback: keeping user version.`,
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rollback: Save state before update, restore if OpenClaw breaks
+// ---------------------------------------------------------------------------
+
+function saveRollbackState(manifest: Manifest, log: (msg: string) => void): void {
+  try {
+    fs.mkdirSync(ROLLBACK_DIR, { recursive: true });
+
+    // Save current manifest
+    if (fs.existsSync(MANIFEST_PATH)) {
+      fs.copyFileSync(MANIFEST_PATH, path.join(ROLLBACK_DIR, "manifest.json"));
+    }
+
+    // Save current version
+    if (fs.existsSync(VERSION_FILE)) {
+      fs.copyFileSync(VERSION_FILE, path.join(ROLLBACK_DIR, "vm-version"));
+    }
+
+    // Save copies of all files in the current manifest (the actual file contents)
+    let filesSaved = 0;
+    for (const filePath of Object.keys(manifest.files)) {
+      if (!fs.existsSync(filePath)) continue;
+      const dest = path.join(ROLLBACK_DIR, "files", filePath.replace(/^\//, ""));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(filePath, dest);
+      filesSaved++;
+    }
+
+    log(`Rollback state saved: ${filesSaved} files to ${ROLLBACK_DIR}`);
+  } catch (err: any) {
+    log(`WARNING: Could not save rollback state: ${err.message}`);
+  }
+}
+
+function performRollback(log: (msg: string) => void): boolean {
+  const rollbackManifest = path.join(ROLLBACK_DIR, "manifest.json");
+  const rollbackVersion = path.join(ROLLBACK_DIR, "vm-version");
+
+  if (!fs.existsSync(rollbackManifest)) {
+    log("No rollback state found — cannot restore");
+    return false;
+  }
+
+  try {
+    // Restore all saved files
+    const filesDir = path.join(ROLLBACK_DIR, "files");
+    if (fs.existsSync(filesDir)) {
+      const restoreFiles = (dir: string, base: string) => {
+        for (const entry of fs.readdirSync(dir)) {
+          const fullPath = path.join(dir, entry);
+          const targetPath = "/" + path.relative(filesDir, fullPath);
+          if (fs.statSync(fullPath).isDirectory()) {
+            restoreFiles(fullPath, base);
+          } else {
+            ensureDir(targetPath);
+            fs.copyFileSync(fullPath, targetPath);
+          }
+        }
+      };
+      restoreFiles(filesDir, filesDir);
+    }
+
+    // Restore manifest and version
+    fs.copyFileSync(rollbackManifest, MANIFEST_PATH);
+    if (fs.existsSync(rollbackVersion)) {
+      fs.copyFileSync(rollbackVersion, VERSION_FILE);
+    }
+
+    const version = readFileSafe(rollbackVersion) || "unknown";
+    log(`ROLLBACK COMPLETE: restored to ${version.trim()}`);
+
+    // Clean up marker
+    try { fs.unlinkSync(ROLLBACK_MARKER); } catch {}
+
+    return true;
+  } catch (err: any) {
+    log(`ROLLBACK FAILED: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Check if we need to rollback after a failed update.
+ * Called on plugin startup — if the marker exists, the previous update
+ * caused a restart. Verify OpenClaw is healthy; if not, rollback.
+ */
+async function checkForPendingRollback(log: (msg: string) => void): Promise<void> {
+  if (!fs.existsSync(ROLLBACK_MARKER)) return;
+
+  const markerContent = readFileSafe(ROLLBACK_MARKER) || "";
+  log(`Update marker found: ${markerContent.trim()}. Verifying health...`);
+
+  // Wait for OpenClaw to stabilize after restart
+  await new Promise((r) => setTimeout(r, 15000));
+
+  // Check if OpenClaw main port is responding
+  const healthy = await new Promise<boolean>((resolve) => {
+    const req = http.request(
+      { hostname: "127.0.0.1", port: 18789, path: "/health", timeout: 5000 },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode === 200);
+      }
+    );
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+
+  if (healthy) {
+    log("Post-update health check PASSED — update successful");
+    try { fs.unlinkSync(ROLLBACK_MARKER); } catch {}
+    // Clean up rollback state (update succeeded, no longer needed)
+    try { fs.rmSync(ROLLBACK_DIR, { recursive: true }); } catch {}
+    return;
+  }
+
+  log("Post-update health check FAILED — rolling back!");
+  if (performRollback(log)) {
+    log("Rollback succeeded — scheduling restart to apply rolled-back code");
+    setTimeout(() => process.exit(0), 3000);
+  } else {
+    log("CRITICAL: Rollback failed. Manual intervention required.");
   }
 }
 
@@ -426,12 +614,25 @@ async function applyUpdate(
   log(`Applying update ${req.previous} -> ${req.version}`);
   log(`Files in update: ${Object.keys(newManifest.files).length}`);
 
+  // 1.5. Save rollback state BEFORE modifying anything
+  saveRollbackState(currentManifest, log);
+  fs.writeFileSync(ROLLBACK_MARKER, `${req.previous} -> ${req.version}\n${new Date().toISOString()}`);
+
   // 2. Process each file in the new manifest
   for (const [filePath, rawEntry] of Object.entries(newManifest.files)) {
     const newInfo = normalizeFileInfo(rawEntry, filePath);
 
     // Skip manifest.json itself
     if (filePath.endsWith("manifest.json")) continue;
+
+    // SAFETY GATE: reject paths outside the allowed write prefixes.
+    // This is the hard boundary that protects user data (conversations,
+    // memories, uploads, /data/*) from ever being touched by an update.
+    if (!isAllowedWritePath(filePath)) {
+      log(`BLOCKED (outside allowed paths): ${filePath}`);
+      result.filesSkipped++;
+      continue;
+    }
 
     // Protected paths -- never touch (except security updates)
     if (PROTECTED_PATHS.has(filePath) && newInfo.type !== "security") {
@@ -492,10 +693,14 @@ async function applyUpdate(
     if (isMergeableFile(filePath) && userContent !== null && updateContent !== null) {
       log(`AI MERGE [${newInfo.type}]: Analyzing ${filePath}...`);
 
+      // Read base version for better AI context (stored after previous update)
+      const basePath = path.join(BASE_DIR, filePath.replace(/^\//, ""));
+      const originalContent = readFileSafe(basePath);
+
       const mergeResult = await aiMerge(
         filePath,
         newInfo.type,
-        null, // We don't cache old file contents
+        originalContent,
         userContent,
         updateContent,
         log
@@ -519,17 +724,9 @@ async function applyUpdate(
           result.filesUpdated++;
           log(`APPLIED UPDATE [${newInfo.type}]: ${filePath}`);
         }
-        // Save user's version as backup
-        const backupPath = filePath + ".user-backup-" + req.version;
-        fs.writeFileSync(backupPath, userContent);
-        log(`User backup saved: ${backupPath}`);
       } else {
-        // kept_user
-        const conflictPath = filePath + ".update-" + req.version;
-        if (updateSrc) {
-          ensureDir(conflictPath);
-          fs.copyFileSync(updateSrc, conflictPath);
-        }
+        // kept_user — user's version stays as-is, no sidecar files
+        log(`KEPT USER: ${filePath}`);
       }
 
       result.aiMerges.push({
@@ -575,6 +772,12 @@ async function applyUpdate(
   // 3. Handle deleted files: files in old manifest but not in new
   for (const filePath of Object.keys(currentManifest.files)) {
     if (!(filePath in newManifest.files)) {
+      // SAFETY GATE: never delete files outside allowed write prefixes
+      if (!isAllowedWritePath(filePath)) {
+        log(`BLOCKED DELETE (outside allowed paths): ${filePath}`);
+        continue;
+      }
+
       // Never delete protected paths
       if (PROTECTED_PATHS.has(filePath)) {
         log(`KEPT (protected): ${filePath}`);
@@ -633,6 +836,21 @@ async function applyUpdate(
   fs.writeFileSync(MANIFEST_PATH, JSON.stringify(newManifest, null, 2));
   log(`Manifest saved to ${MANIFEST_PATH}`);
 
+  // 4.5. Save base versions for future merges (enables 3-way merge)
+  let basesSaved = 0;
+  for (const filePath of Object.keys(newManifest.files)) {
+    const src = resolveUpdateSrc(req.path, filePath);
+    if (src) {
+      const baseDst = path.join(BASE_DIR, filePath.replace(/^\//, ""));
+      try {
+        fs.mkdirSync(path.dirname(baseDst), { recursive: true });
+        fs.copyFileSync(src, baseDst);
+        basesSaved++;
+      } catch {}
+    }
+  }
+  log(`Saved ${basesSaved} base versions for future merges`);
+
   // 5. Update version file
   fs.writeFileSync(VERSION_FILE, req.version);
 
@@ -690,6 +908,19 @@ function startUpdateServer(log: (msg: string) => void): void {
       return;
     }
 
+    // Manual rollback endpoint
+    if (req.method === "POST" && req.url === "/system/rollback") {
+      log("Manual rollback requested");
+      const success = performRollback(log);
+      res.writeHead(success ? 200 : 500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: success ? "rolled_back" : "failed" }));
+      if (success) {
+        log("Scheduling restart after manual rollback");
+        setTimeout(() => process.exit(0), 3000);
+      }
+      return;
+    }
+
     // Update endpoint
     if (req.method === "POST" && req.url === "/system/update") {
       try {
@@ -732,7 +963,7 @@ function startUpdateServer(log: (msg: string) => void): void {
     res.end(
       JSON.stringify({
         error: "Not found",
-        endpoints: ["POST /system/update", "GET /health"],
+        endpoints: ["POST /system/update", "POST /system/rollback", "GET /health"],
       })
     );
   });
@@ -768,6 +999,11 @@ function register(api: PluginApi): void {
   } catch {
     log("No VM version file found (first install?)");
   }
+
+  // Check if we need to rollback a failed update (runs async after startup)
+  checkForPendingRollback(log).catch((err) =>
+    log(`Rollback check error: ${err.message}`)
+  );
 }
 
 export default { register };

@@ -4,6 +4,7 @@ set -e
 log() { echo "[jarvit-entry] $1"; }
 
 log "=== Jarvit VM Starting ==="
+
 log "User: ${JARVIT_USER_ID} | Tier: ${JARVIT_TIER}"
 
 # Fail fast if critical env vars are missing
@@ -49,14 +50,15 @@ export JARVIT_HOME="/data"
 # Auto-update: start the polling loop in the background
 # ---------------------------------------------------------------------------
 # The VM has no systemd, so we run the update checker as a background loop.
-# It sleeps 30 min between checks, with a random jitter of 0-300s to avoid
-# all VMs hitting GitHub API simultaneously.
+# It sleeps 5 min between checks, with a random jitter of 0-60s to stagger
+# VMs on the same host. VMs now poll the host-agent (not GitHub API), so
+# rate limits are not a concern.
 
 # Create log directory BEFORE starting the background loop
 mkdir -p /data/logs /data/updates
 
 if [ -x /opt/jarvit/scripts/vm-auto-update.sh ]; then
-    log "Starting auto-update poller (30min interval, public repo — no token needed)"
+    log "Starting auto-update poller (5min interval, Object Storage — no token needed)"
     (
         # Disable set -e in this subshell -- we handle errors ourselves.
         # set -e is inherited from the parent and can kill the entire loop
@@ -72,9 +74,9 @@ if [ -x /opt/jarvit/scripts/vm-auto-update.sh ]; then
 
         while true; do
             /opt/jarvit/scripts/vm-auto-update.sh >> /data/logs/vm-update.log 2>&1
-            # 1800s = 30min, plus random jitter 0-300s
-            JITTER=$(( $(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ') % 300 ))
-            sleep $(( 1800 + ${JITTER:-0} ))
+            # 300s = 5min, plus random jitter 0-60s to stagger VMs on same host
+            JITTER=$(( $(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ') % 60 ))
+            sleep $(( 300 + ${JITTER:-0} ))
         done
     ) &
     log "Auto-update poller PID: $!"

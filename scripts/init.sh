@@ -78,9 +78,10 @@ extract_field() {
 }
 
 # Retry loop: Host Agent pushes MMDS data AFTER VM boot, so the first
-# attempt may arrive before metadata is ready. Try up to 5 times (1s apart)
-# for a maximum ~5s total wait — well within the boot time budget.
-for attempt in 1 2 3 4 5; do
+# attempt may arrive before metadata is ready. Try up to 30 times (1s apart).
+# Extra retries needed for snapshot restore: after golden-template sleep ends,
+# the loop continues and needs time for the host to push fresh MMDS identity.
+for attempt in $(seq 1 30); do
     # Get session token (PUT with TTL header)
     MMDS_TOKEN=$(curl -s --connect-timeout 2 --max-time 3 -X PUT \
         -H "X-metadata-token-ttl-seconds: 21600" \
@@ -104,6 +105,35 @@ for attempt in 1 2 3 4 5; do
             GATEWAY_IP=$(extract_field gateway_ip)
 
             if [ -n "$BUNDLE_ID" ] && [ -n "$TIER" ]; then
+                # Golden template mode: VM is being prepared for snapshotting.
+                # Loop with short sleeps so the host can take a snapshot.
+                # After snapshot restore, the current sleep finishes quickly
+                # (at most 5s), then we re-read MMDS which now has real identity.
+                MODE=$(extract_field mode)
+                if [ "$MODE" = "golden-template" ]; then
+                    log "MMDS: golden-template mode — waiting for snapshot"
+                    while true; do
+                        sleep 5
+                        # Re-read MMDS to check if mode changed (after restore)
+                        _GT_TOKEN=$(curl -s --connect-timeout 2 --max-time 3 -X PUT \
+                            -H "X-metadata-token-ttl-seconds: 21600" \
+                            "${MMDS_ADDR}/latest/api/token" 2>/dev/null) || true
+                        [ -z "$_GT_TOKEN" ] && continue
+                        _GT_JSON=$(curl -s --connect-timeout 2 --max-time 3 \
+                            -H "X-metadata-token: ${_GT_TOKEN}" \
+                            -H "Accept: application/json" \
+                            "${MMDS_ADDR}/jarvit" 2>/dev/null) || true
+                        [ -z "$_GT_JSON" ] && continue
+                        _GT_MODE=$(echo "$_GT_JSON" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+                        if [ "$_GT_MODE" != "golden-template" ]; then
+                            log "MMDS: mode changed from golden-template — resuming boot"
+                            break
+                        fi
+                    done
+                    # Re-enter the outer loop to read fresh identity
+                    continue
+                fi
+
                 MMDS_OK=1
                 log "MMDS: bundle_id=${BUNDLE_ID} tier=${TIER} (attempt ${attempt})"
                 break
@@ -111,7 +141,7 @@ for attempt in 1 2 3 4 5; do
         fi
     fi
 
-    log "MMDS not ready yet (attempt ${attempt}/5), retrying in 1s..."
+    log "MMDS not ready yet (attempt ${attempt}/30), retrying in 1s..."
     sleep 1
 done
 
@@ -250,4 +280,7 @@ chown -R jarvit:jarvit /opt/jarvit 2>/dev/null || true
 
 # Drop privileges: init.sh ran as root for mount/network setup.
 # Now hand off to the jarvit user for the actual application.
-exec gosu jarvit /opt/jarvit/entrypoint.sh
+# tini reaps zombie processes and forwards signals (SIGTERM → clean shutdown).
+# Without it, orphaned child processes (curl, node workers) become zombies
+# since init.sh as PID 1 doesn't have a wait() loop.
+exec tini -- gosu jarvit /opt/jarvit/entrypoint.sh

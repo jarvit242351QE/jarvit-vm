@@ -93,6 +93,8 @@ def main():
         ("scripts/json-asset-url.js", "/opt/jarvit/scripts/json-asset-url.js"),
         ("scripts/version-validate.js", "/opt/jarvit/scripts/version-validate.js"),
         ("scripts/version-compare.js", "/opt/jarvit/scripts/version-compare.js"),
+        ("scripts/entrypoint.sh", "/opt/jarvit/scripts/entrypoint.sh"),
+        ("scripts/init.sh", "/opt/jarvit/scripts/init.sh"),
     ])
 
     # Skip patterns: build/dev artifacts that don't need checksum tracking
