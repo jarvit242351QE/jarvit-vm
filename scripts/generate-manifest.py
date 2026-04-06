@@ -100,6 +100,7 @@ def main():
     # Skip patterns: build/dev artifacts that don't need checksum tracking
     skip_suffixes = (".d.ts", ".d.ts.map", ".js.map", ".tsbuildinfo")
     skip_names = {"tsconfig.json", "package-lock.json"}
+    skip_prefixes = (".pipeline-", "test.")
 
     # Add all plugin files
     for root, dirs, files in os.walk("plugins"):
@@ -107,6 +108,8 @@ def main():
         dirs[:] = [d for d in dirs if d not in ("node_modules", "src", ".git")]
         for fname in files:
             if fname in skip_names or any(fname.endswith(s) for s in skip_suffixes):
+                continue
+            if any(fname.startswith(p) for p in skip_prefixes):
                 continue
             local_path = os.path.join(root, fname)
             # Map to /opt/jarvit/<path>

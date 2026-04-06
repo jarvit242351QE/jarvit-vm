@@ -161,8 +161,20 @@ log "Current version: $CURRENT"
 RELEASE_JSON=$(curl -sf --connect-timeout 10 --max-time 15 \
     "${UPDATE_BASE_URL}/latest.json" 2>/dev/null) || RELEASE_JSON=""
 
+# Fallback: if primary URL fails, try local host bridge
+LOCAL_BRIDGE="http://172.16.0.1:18792"
+if [ -z "$RELEASE_JSON" ] && [ "$UPDATE_BASE_URL" != "$LOCAL_BRIDGE" ]; then
+    log "Primary URL unreachable, trying local bridge at ${LOCAL_BRIDGE}..."
+    RELEASE_JSON=$(curl -sf --connect-timeout 5 --max-time 10 \
+        "${LOCAL_BRIDGE}/latest.json" 2>/dev/null) || RELEASE_JSON=""
+    if [ -n "$RELEASE_JSON" ]; then
+        UPDATE_BASE_URL="$LOCAL_BRIDGE"
+        log "Switched to local bridge for this update cycle"
+    fi
+fi
+
 if [ -z "$RELEASE_JSON" ]; then
-    log "Object Storage unavailable or no release yet. Will retry next cycle."
+    log "Update server unavailable (tried primary + local bridge). Will retry next cycle."
     log_disk_usage
     exit 0
 fi
