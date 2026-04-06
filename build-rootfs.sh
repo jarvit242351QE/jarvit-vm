@@ -54,30 +54,28 @@ if [ ! -d "$SCRIPT_DIR/plugins/vm-updater/dist" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Copy VM files (all from this repo — single source of truth)
+# Copy VM files — layout must match Dockerfile.vm-rootfs COPY paths exactly
 # ---------------------------------------------------------------------------
 echo "Copying VM files..."
 cp "$SCRIPT_DIR/Dockerfile.vm-rootfs" "$BUILD_DIR/"
-cp "$SCRIPT_DIR/scripts/init.sh" "$BUILD_DIR/"
-cp "$SCRIPT_DIR/scripts/entrypoint.sh" "$BUILD_DIR/"
 cp "$SCRIPT_DIR/memory-tree-seed.tar.gz" "$BUILD_DIR/"
 cp -r "$SCRIPT_DIR/config" "$BUILD_DIR/config"
 
-# ---------------------------------------------------------------------------
-# Copy auto-update system (from this repo)
-# ---------------------------------------------------------------------------
-echo "Copying auto-update system..."
-mkdir -p "$BUILD_DIR/vm-update/vm-updater-plugin"
-
-cp "$SCRIPT_DIR/scripts/vm-auto-update.sh" "$BUILD_DIR/vm-update/"
-cp "$SCRIPT_DIR/scripts/vm-simple-update.sh" "$BUILD_DIR/vm-update/"
-# JS helpers used by vm-auto-update.sh (JSON parsing, version comparison, signature verification)
+# Scripts (Dockerfile: COPY scripts/init.sh, scripts/entrypoint.sh, etc.)
+mkdir -p "$BUILD_DIR/scripts"
+cp "$SCRIPT_DIR/scripts/init.sh" "$BUILD_DIR/scripts/"
+cp "$SCRIPT_DIR/scripts/entrypoint.sh" "$BUILD_DIR/scripts/"
+cp "$SCRIPT_DIR/scripts/vm-auto-update.sh" "$BUILD_DIR/scripts/"
 for js in "$SCRIPT_DIR"/scripts/*.js; do
-  [ -f "$js" ] && cp "$js" "$BUILD_DIR/vm-update/"
+  [ -f "$js" ] && cp "$js" "$BUILD_DIR/scripts/"
 done
-cp -r "$SCRIPT_DIR/plugins/vm-updater/dist" "$BUILD_DIR/vm-update/vm-updater-plugin/dist"
-cp "$SCRIPT_DIR/plugins/vm-updater/jarvit.plugin.json" "$BUILD_DIR/vm-update/vm-updater-plugin/"
-cp "$SCRIPT_DIR/plugins/vm-updater/package.json" "$BUILD_DIR/vm-update/vm-updater-plugin/"
+
+# vm-updater plugin (Dockerfile: COPY plugins/vm-updater/...)
+mkdir -p "$BUILD_DIR/plugins/vm-updater/dist"
+cp "$SCRIPT_DIR/plugins/vm-updater/index.js" "$BUILD_DIR/plugins/vm-updater/"
+cp "$SCRIPT_DIR/plugins/vm-updater/package.json" "$BUILD_DIR/plugins/vm-updater/"
+cp "$SCRIPT_DIR/plugins/vm-updater/jarvit.plugin.json" "$BUILD_DIR/plugins/vm-updater/"
+cp "$SCRIPT_DIR/plugins/vm-updater/dist/index.js" "$BUILD_DIR/plugins/vm-updater/dist/"
 
 # ---------------------------------------------------------------------------
 # Copy OpenClaw source (from J1 repo — the runtime engine)
