@@ -51,7 +51,6 @@ VERSION_FILE="/opt/jarvit/vm-version"
 UPDATES_DIR="/data/updates"
 TMP_DIR="/data/updates/tmp"
 AUDIT_DIR="/data/updates/audit"
-UPDATER_URL="http://127.0.0.1:18790"
 LOG_TAG="[vm-update]"
 LOCK_FILE="/tmp/vm-update.lock"
 
@@ -224,20 +223,6 @@ if [ "$IS_NEWER" != "yes" ]; then
     exit 0
 fi
 
-# ---------------------------------------------------------------------------
-# Double-check via vm-updater health endpoint (if available)
-# Catches the case where VERSION_FILE is stale but the plugin knows better
-# ---------------------------------------------------------------------------
-UPDATER_VERSION=$(curl -sf --connect-timeout 3 "$UPDATER_URL/health" 2>/dev/null \
-    | json_get "version") || UPDATER_VERSION=""
-
-if [ "$UPDATER_VERSION" = "$LATEST" ]; then
-    log "vm-updater reports already at $LATEST (VERSION_FILE was stale). Fixing."
-    echo "$LATEST" > "$VERSION_FILE"
-    log_disk_usage
-    exit 0
-fi
-
 log "New version available: $CURRENT -> $LATEST"
 
 # ---------------------------------------------------------------------------
@@ -400,62 +385,39 @@ if [ ! -f "$EXTRACT_DIR/manifest.json" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Call the vm-updater plugin to apply the update
+# Signal the agent to apply the update
 # ---------------------------------------------------------------------------
-log "Calling vm-updater plugin at $UPDATER_URL/system/update ..."
+# The vm-updater plugin inside OpenClaw checks for this file every 30s.
+# When it finds it, it reads the manifest, copies changed files, and updates
+# vm-version — all within the running process. No restart needed.
 
-RESPONSE=$(curl -sf --connect-timeout 15 --max-time 300 \
-    -X POST "$UPDATER_URL/system/update" \
-    -H "Content-Type: application/json" \
-    -d "{\"version\":\"$LATEST\",\"path\":\"$EXTRACT_DIR\",\"previous\":\"$CURRENT\"}" \
-    2>/dev/null) || {
-    log "vm-updater endpoint unreachable. Falling back to simple update."
-    # Copy the simple-update script to /tmp before running it.
-    # The script may update itself (/opt/jarvit/scripts/vm-simple-update.sh)
-    # during execution, which corrupts the running shell's file descriptor.
-    cp /opt/jarvit/scripts/vm-simple-update.sh /tmp/vm-simple-update-run.sh
-    chmod +x /tmp/vm-simple-update-run.sh
-    /tmp/vm-simple-update-run.sh "$EXTRACT_DIR" "$LATEST" "$CURRENT"
-    FALLBACK_RC=$?
-    rm -f /tmp/vm-simple-update-run.sh
+PENDING_FILE="/data/updates/pending.json"
 
-    # Clean tmp dir (tarball already gone, extract dir still there)
-    rm -rf "$TMP_DIR"
-    mkdir -p "$TMP_DIR"
+log "Signaling agent to self-update: $CURRENT -> $LATEST"
+printf '{"version":"%s","path":"%s"}\n' "$LATEST" "$EXTRACT_DIR" > "$PENDING_FILE"
 
-    if [ $FALLBACK_RC -eq 0 ]; then
-        echo "$LATEST" > "$VERSION_FILE"
-        log "Simple update to $LATEST complete."
-        cleanup_after_update
-        log_disk_usage
-    else
-        log "Simple update failed (rc=$FALLBACK_RC). Will retry next cycle."
-        log_disk_usage
-        exit 2
-    fi
-    exit 0
-}
+# Wait up to 120s for the agent to pick it up and apply
+WAIT=0
+while [ $WAIT -lt 120 ] && [ -f "$PENDING_FILE" ]; do
+    sleep 5
+    WAIT=$((WAIT + 5))
+done
 
-# ---------------------------------------------------------------------------
-# Post-apply cleanup
-# ---------------------------------------------------------------------------
+if [ -f "$PENDING_FILE" ]; then
+    log "Agent didn't pick up update within 120s. Will retry next cycle."
+    rm -f "$PENDING_FILE"
+    log_disk_usage
+    exit 2
+fi
 
-# Clean tmp dir (plugin already read all files from extract dir)
-rm -rf "$TMP_DIR"
-mkdir -p "$TMP_DIR"
-log "Cleaned up tmp dir"
-
-# Check if the update was successful
-UPDATE_OK=$(printf '%s\n' "$RESPONSE" | json_get "status")
-
-if [ "$UPDATE_OK" = "updated" ]; then
-    echo "$LATEST" > "$VERSION_FILE"
-    log "Updated to $LATEST successfully."
+# Agent applied the update — verify
+NEW_CURRENT=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
+if [ "$NEW_CURRENT" = "$LATEST" ]; then
+    log "Self-update to $LATEST complete (agent applied)."
     cleanup_after_update
     log_disk_usage
 else
-    log "Update handler returned non-success. Will retry next cycle."
-    log "Response: $RESPONSE"
+    log "Agent removed pending marker but version is $NEW_CURRENT (expected $LATEST). Will retry."
     log_disk_usage
     exit 2
 fi
