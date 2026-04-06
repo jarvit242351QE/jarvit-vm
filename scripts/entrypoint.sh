@@ -25,13 +25,19 @@ mkdir -p /data/config \
          "$WORKSPACE/memory/knowledge" \
          "$WORKSPACE/memory/sessions"
 
-# Config: copy template, replace 2 placeholders (no JARVIT_USER_ID — AI Proxy handles identity)
-cp /opt/jarvit/config/jarvit.json /data/config/jarvit.json
-sed -i \
-  -e "s|\${JARVIT_GATEWAY_TOKEN}|${JARVIT_GATEWAY_TOKEN}|g" \
-  -e "s|\${JARVIT_PROXY_URL}|${JARVIT_GATEWAY_URL}|g" \
-  /data/config/jarvit.json
-cp /data/config/jarvit.json /data/.jarvit/jarvit.json
+# Config: copy template on first boot only — never overwrite user customizations.
+# Placeholders are replaced with real values from MMDS/cmdline env vars.
+if [ ! -f /data/config/jarvit.json ]; then
+    log "First boot: initializing config from template"
+    cp /opt/jarvit/config/jarvit.json /data/config/jarvit.json
+    sed -i \
+      -e "s|\${JARVIT_GATEWAY_TOKEN}|${JARVIT_GATEWAY_TOKEN}|g" \
+      -e "s|\${JARVIT_PROXY_URL}|${JARVIT_GATEWAY_URL}|g" \
+      /data/config/jarvit.json
+    cp /data/config/jarvit.json /data/.jarvit/jarvit.json
+else
+    log "Config exists on data volume — preserving user customizations"
+fi
 
 # Memory tree: seed on first boot only (tarball baked into rootfs image)
 [ -f "$WORKSPACE/MEMORY.md" ] || tar xzf /opt/jarvit/memory-tree-seed.tar.gz -C "$WORKSPACE/"

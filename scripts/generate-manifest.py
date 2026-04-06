@@ -93,8 +93,12 @@ def main():
         ("scripts/json-asset-url.js", "/opt/jarvit/scripts/json-asset-url.js"),
         ("scripts/version-validate.js", "/opt/jarvit/scripts/version-validate.js"),
         ("scripts/version-compare.js", "/opt/jarvit/scripts/version-compare.js"),
-        ("scripts/entrypoint.sh", "/opt/jarvit/scripts/entrypoint.sh"),
-        ("scripts/init.sh", "/opt/jarvit/scripts/init.sh"),
+        ("scripts/verify-cosign.js", "/opt/jarvit/scripts/verify-cosign.js"),
+        # entrypoint.sh and init.sh live at their actual VM paths, not /opt/jarvit/scripts/.
+        # Dockerfile: COPY entrypoint.sh /opt/jarvit/entrypoint.sh
+        # Dockerfile: COPY init.sh /sbin/init
+        ("scripts/entrypoint.sh", "/opt/jarvit/entrypoint.sh"),
+        ("scripts/init.sh", "/sbin/init"),
     ])
 
     # Skip patterns: build/dev artifacts that don't need checksum tracking

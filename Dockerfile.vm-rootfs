@@ -154,14 +154,14 @@ RUN rm -f /usr/bin/apt* /usr/bin/dpkg* /usr/sbin/dpkg* && \
 # ---------------------------------------------------------------------------
 # Init script (PID 1) — handles boot: MMDS, networking, /data mount
 # ---------------------------------------------------------------------------
-COPY init.sh /sbin/init
+COPY scripts/init.sh /sbin/init
 RUN chmod 755 /sbin/init
 
 # ---------------------------------------------------------------------------
 # Application files — entrypoint, config template, memory seed
 # ---------------------------------------------------------------------------
 RUN mkdir -p /opt/jarvit/config /opt/jarvit/scripts /opt/jarvit/secrets /data/updates /data/logs
-COPY entrypoint.sh /opt/jarvit/entrypoint.sh
+COPY scripts/entrypoint.sh /opt/jarvit/entrypoint.sh
 RUN chmod 755 /opt/jarvit/entrypoint.sh
 COPY config/jarvit.json /opt/jarvit/config/jarvit.json
 COPY config/cosign.pub /opt/jarvit/config/cosign.pub
